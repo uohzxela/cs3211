@@ -1,0 +1,119 @@
+Matrix multiplication of size 128 using 1 threads
+Matrix multiplication took 0.0257 seconds
+
+Matrix multiplication of size 128 using 2 threads
+Matrix multiplication took 0.0118 seconds
+
+Matrix multiplication of size 128 using 3 threads
+Matrix multiplication took 0.0076 seconds
+
+Matrix multiplication of size 128 using 4 threads
+Matrix multiplication took 0.0088 seconds
+
+Matrix multiplication of size 128 using 5 threads
+Matrix multiplication took 0.0082 seconds
+
+Matrix multiplication of size 128 using 6 threads
+Matrix multiplication took 0.0069 seconds
+
+Matrix multiplication of size 128 using 7 threads
+Matrix multiplication took 0.0082 seconds
+
+Matrix multiplication of size 128 using 8 threads
+Matrix multiplication took 0.0071 seconds
+
+Matrix multiplication of size 256 using 1 threads
+Matrix multiplication took 0.1284 seconds
+
+Matrix multiplication of size 256 using 2 threads
+Matrix multiplication took 0.0794 seconds
+
+Matrix multiplication of size 256 using 3 threads
+Matrix multiplication took 0.0486 seconds
+
+Matrix multiplication of size 256 using 4 threads
+Matrix multiplication took 0.0492 seconds
+
+Matrix multiplication of size 256 using 5 threads
+Matrix multiplication took 0.0476 seconds
+
+Matrix multiplication of size 256 using 6 threads
+Matrix multiplication took 0.0424 seconds
+
+Matrix multiplication of size 256 using 7 threads
+Matrix multiplication took 0.0431 seconds
+
+Matrix multiplication of size 256 using 8 threads
+Matrix multiplication took 0.0428 seconds
+
+Matrix multiplication of size 512 using 1 threads
+Matrix multiplication took 1.0725 seconds
+
+Matrix multiplication of size 512 using 2 threads
+Matrix multiplication took 0.5613 seconds
+
+Matrix multiplication of size 512 using 3 threads
+Matrix multiplication took 0.4191 seconds
+
+Matrix multiplication of size 512 using 4 threads
+Matrix multiplication took 0.3462 seconds
+
+Matrix multiplication of size 512 using 5 threads
+Matrix multiplication took 0.3915 seconds
+
+Matrix multiplication of size 512 using 6 threads
+Matrix multiplication took 0.3485 seconds
+
+Matrix multiplication of size 512 using 7 threads
+Matrix multiplication took 0.3692 seconds
+
+Matrix multiplication of size 512 using 8 threads
+Matrix multiplication took 0.3538 seconds
+
+Matrix multiplication of size 1024 using 1 threads
+Matrix multiplication took 11.5349 seconds
+
+Matrix multiplication of size 1024 using 2 threads
+Matrix multiplication took 5.8009 seconds
+
+Matrix multiplication of size 1024 using 3 threads
+Matrix multiplication took 4.4085 seconds
+
+Matrix multiplication of size 1024 using 4 threads
+Matrix multiplication took 3.6165 seconds
+
+Matrix multiplication of size 1024 using 5 threads
+Matrix multiplication took 3.7179 seconds
+
+Matrix multiplication of size 1024 using 6 threads
+Matrix multiplication took 3.4414 seconds
+
+Matrix multiplication of size 1024 using 7 threads
+Matrix multiplication took 3.5483 seconds
+
+Matrix multiplication of size 1024 using 8 threads
+Matrix multiplication took 3.4820 seconds
+
+Matrix multiplication of size 2048 using 1 threads
+^TMatrix multiplication took 123.0175 seconds
+
+Matrix multiplication of size 2048 using 2 threads
+Matrix multiplication took 62.7785 seconds
+
+Matrix multiplication of size 2048 using 3 threads
+Matrix multiplication took 43.9963 seconds
+
+Matrix multiplication of size 2048 using 4 threads
+Matrix multiplication took 36.0617 seconds
+
+Matrix multiplication of size 2048 using 5 threads
+Matrix multiplication took 37.2532 seconds
+
+Matrix multiplication of size 2048 using 6 threads
+Matrix multiplication took 35.2216 seconds
+
+Matrix multiplication of size 2048 using 7 threads
+Matrix multiplication took 33.5252 seconds
+
+Matrix multiplication of size 2048 using 8 threads
+Matrix multiplication took 30.7296 seconds
