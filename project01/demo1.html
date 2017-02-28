@@ -1,0 +1,145 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+
+<title>TEST of simple GPU/CPU system</title>
+
+</head>
+<body>
+
+<script src="js/gpu.js?nocache"></script>
+<script src="js/decls.js?nocache"></script>
+
+<input type="button" value="Using CPU" onclick="return toggleMode(this);" />
+<input type="button" value="Edge detection off" onclick="return toggleEdge(this);" />
+<input type="button" value="Sharpen off" onclick="return toggleSharpen(this);" />
+<input type="button" value="Blur 3x3 off" onclick="return toggleBlur3x3(this);" />
+<input type="button" value="Blur 5x5 off" onclick="return toggleBlur5x5(this);" />
+<input type="button" value="Blur 7x7 off" onclick="return toggleBlur7x7(this);" />
+<input type="button" value="Blur 9x9 off" onclick="return toggleBlur9x9(this);" />
+<input type="button" value="Blur optimization off (for non-pipeline use)" onclick="return toggleOptimizations(this);" />
+<input type="button" value="Animation" onclick="return changeAnimation(this);" />
+
+
+<div id="fps"></div>
+
+<img id="backimage" src="images/image2.jpg" onload="loadImage()" width="800" height="600">
+<canvas id="backimageCanvas" width="800" height="600">
+
+<script src="ui.js?nocache"></script>
+<script src="kerneldefs.js?nocache"></script>
+
+
+<script>
+   var myKernelAnim = makeAnim("gpu");
+
+   var edgeGPU = makeEdgeFilter2("gpu");
+   var edgeCPU   = makeEdgeFilter2("cpu");
+
+   var sharpenGPU = makeSharpenFilter("gpu");
+   var sharpenCPU = makeSharpenFilter("cpu");
+
+   var blur3x3GPU = makeBlur3x3Filter("gpu");
+   var blur3x3CPU = makeBlur3x3Filter("cpu");
+   var blur3x3GPU_H = makeBlur3x3FilterH("gpu");
+   var blur3x3GPU_V = makeBlur3x3FilterV("gpu");
+   var blur3x3CPU_H = makeBlur3x3FilterH("cpu");
+   var blur3x3CPU_V = makeBlur3x3FilterV("cpu");
+
+   var blur5x5GPU = makeBlur5x5Filter("gpu");
+   var blur5x5CPU = makeBlur5x5Filter("cpu");
+   var blur5x5GPU_H = makeBlur5x5FilterH("gpu");
+   var blur5x5GPU_V = makeBlur5x5FilterV("gpu");
+   var blur5x5CPU_H = makeBlur5x5FilterH("cpu");
+   var blur5x5CPU_V = makeBlur5x5FilterV("cpu");
+
+   var blur7x7GPU = makeBlur7x7Filter("gpu");
+   var blur7x7CPU = makeBlur7x7Filter("cpu");
+   var blur7x7GPU_H = makeBlur7x7FilterH("gpu");
+   var blur7x7GPU_V = makeBlur7x7FilterV("gpu");
+   var blur7x7CPU_H = makeBlur7x7FilterH("cpu");
+   var blur7x7CPU_V = makeBlur7x7FilterV("cpu");
+
+   var blur9x9GPU = makeBlur9x9Filter("gpu");
+   var blur9x9CPU = makeBlur9x9Filter("cpu");
+   var blur9x9GPU_H = makeBlur9x9FilterH("gpu");
+   var blur9x9GPU_V = makeBlur9x9FilterV("gpu");
+   var blur9x9CPU_H = makeBlur9x9FilterH("cpu");
+   var blur9x9CPU_V = makeBlur9x9FilterV("cpu");
+
+   var marquee = makeAnimator("gpu");
+   var orig;
+   var afterload = false;
+   var animIndex = 0;
+
+   var pipeline = [];
+
+   var optimizables = {"blur3x3": true, "blur5x5": true, "blur7x7": true, "blur9x9": true}
+
+   var canvas = myKernelAnim.getCanvas();
+   document.getElementsByTagName('body')[0].appendChild(canvas);
+
+   var f = document.querySelector("#fps");
+   function renderLoop() {
+      f.innerHTML = fps.getFPS();
+      if (loadedImage) {
+         orig = myKernelAnim(arr);
+         loadedImage=false;
+         afterload = true;
+      }
+      if (animation) {
+         var C =  marquee(orig,animIndex);
+         animIndex = (animIndex+1)%800;
+      } else {
+         var C = orig;
+      }
+
+      for (var i=0; i<pipeline.length; i++) {
+        var filterName = pipeline[i] + (isGpuEnabled ? "GPU" : "CPU");
+        if (isOptimized && pipeline[i] in optimizables) {
+          var filterH = window[filterName + "_H"];
+          var filterV = window[filterName + "_V"];
+          C = filterH(C);
+          C = filterV(C);
+        } else {
+          C = window[filterName](C);
+        }
+      }
+
+      // if (isEdgeEnabled) {
+      //   C = window["edge" + (isGpuEnabled ? "GPU" : "CPU")](C);
+      // }
+      // if (isSharpenEnabled) {
+      //   C = window["sharpen" + (isGpuEnabled ? "GPU" : "CPU")](C);
+      // }
+      // if (is) {
+      //   var filterName = "gaussianBlur" + (isGpuEnabled ? "GPU" : "CPU");
+      //   var blurH = window[filterName + "_H"];
+      //   var blurV = window[filterName + "_V"];
+      //   C = blurH(C);
+      //   C = blurV(C);
+
+      //   // C = window["blur" + (isGpuEnabled ? "GPU" : "CPU")](C);
+      // }
+
+      // output image to canvas
+      toimg(C);
+
+      if (firsttime) {
+         firsttime = false;
+         var cv = document.getElementsByTagName("canvas")[0];
+         var bdy = cv.parentNode;
+         var newCanvas = toimg.getCanvas();
+         bdy.replaceChild(newCanvas, cv);
+      }
+//      setTimeout(renderLoop,1);            // Uncomment this line, and comment the next line
+      requestAnimationFrame(renderLoop);     // to see how fast this could run...
+   }
+   window.onload = renderLoop;
+
+</script>
+
+</body>
+</html>
