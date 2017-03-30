@@ -92,10 +92,6 @@ def is_legal(move, player, board):
 
 def make_move(move, player, board):
     board[move] = player
-    if index2label(move) == 'a7':
-    	print "#####################"
-    	# import pdb
-    	# pdb.set_trace()
     for d in DIRECTIONS:
         make_flips(move, player, board, d)
     return board
@@ -105,12 +101,7 @@ def make_flips(move, player, board, direction):
     if not bracket:
         return
     square = move + direction
-    if index2label(move) == 'a7':
-    	print "bracket:", index2label(bracket)
-    	print "direction:", direction
     while square != bracket:
-    	if index2label(move) == 'a7':
-    		print "square:", index2label(square)
         board[square] = player
         square += direction
 
@@ -141,7 +132,7 @@ def play(color):
 
 def get_move(player, board):
     copy = list(board) # copy the board to prevent cheating
-    move = strategy(player, copy)
+    move = minimax_strategy(player, copy)
     print "move:", index2label(move)
     if not is_valid(move) or not is_legal(move, player, board):
         raise IllegalMoveError(player, move, copy)
@@ -170,5 +161,35 @@ def strategy(player, board):
 			best_move = move
 	return best_move
 
-play(WHITE)
+def minimax_strategy(player, board):
+	return minimax(player, board, 5)[1]
 
+MAX_VALUE = float('inf')
+MIN_VALUE = -MAX_VALUE
+
+def final_value(player, board):
+    diff = score(player, board)
+    if diff < 0:
+        return MIN_VALUE
+    elif diff > 0:
+        return MAX_VALUE
+    return diff
+
+def minimax(player, board, depth):
+	if depth == 0:
+		return score(player, board), None
+	moves = legal_moves(player, board)
+	if not moves:
+		if not any_legal_move(opponent(player), board):
+			return final_value(player, board), None
+		return -minimax(opponent(player), board, depth-1)[0], None
+	max_val = -float('inf')
+	best_move = None
+	for m in moves:
+		curr_val = -minimax(opponent(player), make_move(m, player, list(board)), depth-1)[0]
+		if curr_val > max_val:
+			max_val = curr_val
+			best_move = m
+	return max_val, best_move
+
+play(WHITE)

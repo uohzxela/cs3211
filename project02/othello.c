@@ -1,9 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
-
-typedef int bool;
-#define true 1
-#define false 0
+#include <limits.h>
+#include "othello.h"
 
 static const int WIDTH = 10;
 static const int HEIGHT = 10;
@@ -31,10 +29,10 @@ static const int UP_LEFT = -(WIDTH+1);
 
 static const int DIRECTIONS[] = {UP, UP_RIGHT, RIGHT, DOWN_RIGHT, DOWN, DOWN_LEFT, LEFT, UP_LEFT};
 
-int find_bracket(int square, char player, char *board, int direction);
-char opponent(char player);
-bool is_legal(int move, char player, char *board);
-bool is_valid(int move);
+struct _Tuple { 
+	int move;
+	int val;
+};
 
 char* index2label(int index)
 {
@@ -52,7 +50,8 @@ int label2index(const char *label)
 	return row*WIDTH+col;
 }
 
-char* initial_board() {
+char* initial_board()
+{
 	char *board = malloc(sizeof(int)*(SQUARES));
 	size_t i;
 	for (i=0; i<SQUARES; i++) {
@@ -96,11 +95,6 @@ void print_board(char *board)
 	printf("     ");
 	for (i=0; i<COLS; i++) { printf("%c ", 'a'+i); }
 	printf("\n");
-}
-
-int strategy(char player, char *board)
-{
-	return label2index("f6");
 }
 
 char* copy_board(char *board)
@@ -155,7 +149,7 @@ char opponent(char player)
 int get_move(char player, char *board)
 {
 	char *copy = copy_board(board);
-	int move = strategy(player, copy);
+	int move = minimax_strategy(player, copy);
 	printf("Move: %s\n", index2label(move));
 	if (!is_valid(move) || !is_legal(move, player, board)) {
 		fprintf(stderr, "%s cannot move to square %d\n", (player == WHITE) ? "White" : "Black", move);
@@ -188,7 +182,7 @@ void make_flips(int move, char player, char *board, int direction)
 	}
 }
 
-void make_move(int move, char player, char *board)
+char* make_move(int move, char player, char *board)
 {
 	board[move] = player;
 	size_t i;
@@ -196,19 +190,86 @@ void make_move(int move, char player, char *board)
 		int d = DIRECTIONS[i];
 		make_flips(move, player, board, d);
 	}
+	return board;
 }
 
-void play(char color)
+int minimax_strategy(char player, char *board)
+{
+	return minimax(player, board, 5)->move;
+}
+
+int final_value(char player, char *board)
+{
+	int diff = score(player, board);
+	if (diff < 0) {
+		return INT_MIN;
+	} else if (diff > 0) {
+		return INT_MAX;
+	}
+	return diff;
+}
+
+bool any_legal_move(char player, char *board)
+{
+	int move;
+	for (move=0; move<SQUARES; move++) {
+		if (is_legal(move, player, board)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+Tuple* tuple(int val, int move)
+{
+	Tuple *ret = malloc(sizeof(Tuple));
+	ret->val = val;
+	ret->move = move;
+	return ret;
+}
+
+Tuple* minimax(char player, char *board, int depth)
+{
+	if (depth == 0) {
+		return tuple(score(player, board), -1);
+	}
+
+	int max_val = INT_MIN;
+	int best_move = -1;
+	int curr_val, move;
+
+	for (move=0; move<SQUARES; move++) {
+		if (!is_legal(move, player, board)) continue;
+		Tuple *ret = minimax(opponent(player), make_move(move, player, copy_board(board)), depth-1);
+		curr_val = -(ret->val);
+		if (curr_val > max_val) {
+			max_val = curr_val;
+			best_move = move;
+		}
+	}
+	// no legal moves for current player
+	if (best_move < 0) {
+		// opponent also doesn't have any legal moves
+		if (!any_legal_move(opponent(player), board)) {
+			return tuple(final_value(player, board), -1);
+		}
+		// continue to recurse down without making any moves for current player
+		return tuple(-(minimax(opponent(player), board, depth-1)->val), -1);
+	}
+	return tuple(max_val, best_move);
+}
+
+void play(char player)
 {
 	char *board = initial_board();
-	printf("Before:");
+	printf("Before score: %d", score(player, board));
 	print_board(board);
-	char player = color;
+
 	int move = get_move(player, board);
+
 	make_move(move, player, board);
-	printf("After:");
+	printf("After score: %d", score(player, board));
 	print_board(board);
-	printf("Score: %d\n", score(color, board));
 }
 
 int main(int argc, char *argv[])
