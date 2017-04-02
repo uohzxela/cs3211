@@ -20,6 +20,6 @@ void make_flips(int move, char player, char *board, int direction);
 char* make_move(int move, char player, char *board);
 int minimax_strategy(char player, char *board);
 int final_value(char player, char *board);
-Tuple* tuple(int val, int move);
-Tuple* minimax(char player, char *board, int depth);
+Tuple* tuple(int score, int move);
+Tuple* minimax(char player, char *board, int depth, int alpha, int beta);
 void play(char color);

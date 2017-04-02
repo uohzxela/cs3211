@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 #include "othello.h"
 
@@ -31,7 +32,7 @@ static const int DIRECTIONS[] = {UP, UP_RIGHT, RIGHT, DOWN_RIGHT, DOWN, DOWN_LEF
 
 struct _Tuple { 
 	int move;
-	int val;
+	int score;
 };
 
 char* index2label(int index)
@@ -97,13 +98,10 @@ void print_board(char *board)
 	printf("\n");
 }
 
-char* copy_board(char *board)
+char* copy_board(char *src)
 {
-	char *copy = malloc(sizeof(int)*(SQUARES));
-	size_t i;
-	for (i=0; i<SQUARES; i++) {
-		copy[i] = board[i];
-	}
+	char *copy = malloc(sizeof(int)*SQUARES);
+	memcpy(copy, src, sizeof(int)*SQUARES);
 	return copy;
 }
 
@@ -193,11 +191,6 @@ char* make_move(int move, char player, char *board)
 	return board;
 }
 
-int minimax_strategy(char player, char *board)
-{
-	return minimax(player, board, 5)->move;
-}
-
 int final_value(char player, char *board)
 {
 	int diff = score(player, board);
@@ -220,30 +213,47 @@ bool any_legal_move(char player, char *board)
 	return false;
 }
 
-Tuple* tuple(int val, int move)
+Tuple* tuple(int score, int move)
 {
 	Tuple *ret = malloc(sizeof(Tuple));
-	ret->val = val;
+	ret->score = score;
 	ret->move = move;
 	return ret;
 }
 
-Tuple* minimax(char player, char *board, int depth)
+// int* generate_moves(char player, char *board, int *n)
+// {
+// 	int *moves = malloc(sizeof(int) * SQUARES);
+// 	int move;
+// }
+
+int minimax_strategy(char player, char *board)
+{
+	return minimax(player, board, 10, INT_MIN, INT_MAX)->move;
+}
+
+Tuple* minimax(char player, char *board, int depth, int alpha, int beta)
 {
 	if (depth == 0) {
+		// TODO: change score() to evaluate()
 		return tuple(score(player, board), -1);
 	}
 
-	int max_val = INT_MIN;
+	// int best_score = INT_MIN;
 	int best_move = -1;
-	int curr_val, move;
+	int score, move;
+	// int n;
 
+	// int *moves = generate_moves(player, board, &n);
 	for (move=0; move<SQUARES; move++) {
-		if (!is_legal(move, player, board)) continue;
-		Tuple *ret = minimax(opponent(player), make_move(move, player, copy_board(board)), depth-1);
-		curr_val = -(ret->val);
-		if (curr_val > max_val) {
-			max_val = curr_val;
+		if (alpha >= beta)
+			break;
+		if (!is_legal(move, player, board))
+			continue;
+		Tuple *ret = minimax(opponent(player), make_move(move, player, copy_board(board)), depth-1, -alpha, -beta);
+		score = -(ret->score);
+		if (score > alpha) {
+			alpha = score;
 			best_move = move;
 		}
 	}
@@ -254,9 +264,9 @@ Tuple* minimax(char player, char *board, int depth)
 			return tuple(final_value(player, board), -1);
 		}
 		// continue to recurse down without making any moves for current player
-		return tuple(-(minimax(opponent(player), board, depth-1)->val), -1);
+		return tuple(-(minimax(opponent(player), board, depth-1, -alpha, -beta)->score), -1);
 	}
-	return tuple(max_val, best_move);
+	return tuple(alpha, best_move);
 }
 
 void play(char player)
