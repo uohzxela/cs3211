@@ -147,7 +147,7 @@ char opponent(char player)
 int get_move(char player, char *board)
 {
 	char *copy = copy_board(board);
-	int move = minimax_strategy(player, copy);
+	int move = alphabeta_strategy(player, copy);
 	printf("Move: %s\n", index2label(move));
 	if (!is_valid(move) || !is_legal(move, player, board)) {
 		fprintf(stderr, "%s cannot move to square %d\n", (player == WHITE) ? "White" : "Black", move);
@@ -227,12 +227,12 @@ Tuple* tuple(int score, int move)
 // 	int move;
 // }
 
-int minimax_strategy(char player, char *board)
+int alphabeta_strategy(char player, char *board)
 {
-	return minimax(player, board, 10, INT_MIN, INT_MAX)->move;
+	return alphabeta(player, board, 10, INT_MIN, INT_MAX)->move;
 }
 
-Tuple* minimax(char player, char *board, int depth, int alpha, int beta)
+Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
 {
 	if (depth == 0) {
 		// TODO: change score() to evaluate()
@@ -250,7 +250,11 @@ Tuple* minimax(char player, char *board, int depth, int alpha, int beta)
 			break;
 		if (!is_legal(move, player, board))
 			continue;
-		Tuple *ret = minimax(opponent(player), make_move(move, player, copy_board(board)), depth-1, -alpha, -beta);
+		Tuple *ret = alphabeta(opponent(player),
+							 	make_move(move, player, copy_board(board)),
+							 	depth-1,
+							 	-beta,
+							 	-alpha);
 		score = -(ret->score);
 		if (score > alpha) {
 			alpha = score;
@@ -264,7 +268,7 @@ Tuple* minimax(char player, char *board, int depth, int alpha, int beta)
 			return tuple(final_value(player, board), -1);
 		}
 		// continue to recurse down without making any moves for current player
-		return tuple(-(minimax(opponent(player), board, depth-1, -alpha, -beta)->score), -1);
+		return tuple(-(alphabeta(opponent(player), board, depth-1, -beta, -alpha)->score), -1);
 	}
 	return tuple(alpha, best_move);
 }
@@ -284,6 +288,6 @@ void play(char player)
 
 int main(int argc, char *argv[])
 {
-	play(WHITE);
+	play(BLACK);
 	return 0;
 }
