@@ -2,7 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <time.h>
 #include "othello.h"
+
 #ifdef MPI_ENABLED
 #include "mpi.h"
 MPI_Status status;
@@ -36,8 +38,15 @@ char BLACK = '@';
 char WHITE = 'o';
 char OUTER = '?';
 
-int rank, size;
+int myid, slaves;
+#define MASTER_ID slaves
+#define COMPUTATION_TAG 1
+#define RESULT_TAG 2
 
+long long comm_time = 0;
+long long comp_time = 0;
+
+// rename to Result
 struct _Tuple {
     int move;
     int score;
@@ -51,6 +60,23 @@ struct _Job {
     int depth;
     bool finished;
 };
+
+/** 
+ * Determines the current time
+ *
+ **/
+long long wall_clock_time()
+{
+#ifdef LINUX
+	struct timespec tp;
+	clock_gettime(CLOCK_REALTIME, &tp);
+	return (long long)(tp.tv_nsec + (long long)tp.tv_sec * 1000000000ll);
+#else
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (long long)(tv.tv_usec * 1000 + (long long)tv.tv_sec * 1000000000ll);
+#endif
+}
 
 char* index2label(int index)
 {
@@ -68,7 +94,7 @@ int label2index(const char *label)
     return row*WIDTH+col;
 }
 
-char* initial_board()
+char* create_board()
 {
     char *board = malloc(sizeof(char)*(SQUARES));
     size_t i;
@@ -320,7 +346,7 @@ Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
 
 void play_serial(char player, int depth)
 {
-    char *board = initial_board();
+    char *board = create_board();
     printf("Before score: %d", evaluate(player, board));
     print_board(board);
     int move = get_move(player, board, depth);
@@ -331,148 +357,137 @@ void play_serial(char player, int depth)
 }
 
 #ifdef MPI_ENABLED
-void play(char player, int depth)
+int master(char player, char *board, int depth)
 {
-    char *board = initial_board();
 
-    int best_move = -1;
+	int best_move = -1;
+	int score, nmoves, i, j;
+    int alpha = -9999, beta = 9999;
 
-    int alpha = -9999;
-    int beta = 9999;
+    int current_move[slaves];
+    int *moves = generate_moves(player, board, &nmoves);
+    if (moves == NULL) {
+    	printf("no more moves\n");
+    	return best_move;
+    }
+    bool finished[slaves];
+    for(i = 0; i < slaves; i++) {
+        finished[i] = false;
+    }
 
-    int score;
-    // int best_score = INT_MIN;
+    Tuple *ret = alphabeta(opponent(player),
+            make_move(moves[0], player, copy_board(board)),
+            depth-1,
+            -beta,
+            -alpha);
+    alpha = -(ret->score);
+    best_move = moves[0];
 
     Job *job = malloc(sizeof(Job));
+    printf("num of moves: %d\n", nmoves);
+    printf("slaves: %d\n", slaves);
+    printf("job size: %lu\n", sizeof(Job));
 
+    for (i=0; i<min(nmoves, slaves); i++) {
+        job->player = opponent(player);
+        memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
+        job->depth = depth-1;
+        job->alpha = -beta;
+        job->beta = -alpha;
 
-    if (rank == 0) {
+        printf("send job to %i\n", i);
+        MPI_Send(job, sizeof(Job), MPI_BYTE, i, COMPUTATION_TAG, MPI_COMM_WORLD);
 
-        printf("Before score: %d", evaluate(player, board));
-        print_board(board);
-	    int n, i, j;
-	    int *moves;
-	    int current_move[size];
-	    bool finished[size];
-	    for(i = 0; i < size; i++) {
-	        finished[i] = false;
-	    }
-        // while (1) {
-        moves = generate_moves(player, board, &n);
-        if (moves == NULL) printf("no more moves\n");
-        Tuple *ret = alphabeta(opponent(player),
-                make_move(moves[0], player, copy_board(board)),
-                depth-1,
-                -beta,
-                -alpha);
-        alpha = -(ret->score);
-        best_move = moves[0];
-        // printf("setting alpha to %d\n", alpha);
-        printf("move num: %d\n", n);
-        printf("size: %d\n", size);
-        printf("job size: %lu\n", sizeof(Job));
+        current_move[i] = moves[i];
+    }
 
-        for (i=1; i<min(n, size); i++) {
-            // char *new_board = make_move(moves[i], player, copy_board(board));
-            job->player = opponent(player);
-            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
-            // for (j=0; j<SQUARES; j++) {
-            // 	job->board[i] = board[i];
-            // }
-            // make_move(moves[i], player, job->board);
-            // int j;
-            // for (j=0; j<SQUARES; j++) {
-            // 	printf("%c ", job->board[j]);
-            // }
-            // printf("\n");
-            job->depth = depth-1;
-            job->alpha = -beta;
-            job->beta = -alpha;
+    for (i=slaves; i<nmoves; i++) {
+        MPI_Recv(&score, 1, MPI_INT, MPI_ANY_SOURCE, RESULT_TAG, MPI_COMM_WORLD, &status);
+        printf("received score %i from %i\n", score, status.MPI_SOURCE);
 
-            printf("send job to %i\n", i);
-            MPI_Send(job, sizeof(Job), MPI_BYTE, i, 1, MPI_COMM_WORLD);
-
-            current_move[i] = moves[i];
-
+        if (score >= alpha) {
+            best_move = current_move[status.MPI_SOURCE];
+            alpha = score;
         }
 
-        for (i=size-1; i<n; i++) {
-            MPI_Recv(&score, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
-            printf("received score %i from %i\n", score, status.MPI_SOURCE);
+        memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
+        job->player = opponent(player);
+        job->depth = depth-1;
+        job->alpha = -beta;
+        job->beta = -alpha;
 
-            if (score >= alpha) {
-                best_move = current_move[status.MPI_SOURCE];
-                alpha = score;
-            }
-            // for (j=0; j<SQUARES; j++) {
-            // 	job->board[i] = board[i];
-            // }
-            // make_move(moves[i], player, job->board);
-            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
-            // char *new_board = make_move(moves[i], player, copy_board(board));
-            job->player = opponent(player);
-            // job->board = *new_board;
-            job->depth = depth-1;
-            job->alpha = -beta;
-            job->beta = -alpha;
+        printf("send job(2) to %i\n", status.MPI_SOURCE);
+        MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, COMPUTATION_TAG, MPI_COMM_WORLD);
+        current_move[status.MPI_SOURCE] = moves[i];
+    }
 
-            printf("send job(2) to %i\n", status.MPI_SOURCE);
-            MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-            current_move[status.MPI_SOURCE] = moves[i];
+    // more slaves than moves
+    job->finished = true;
+    for (i=nmoves; i<slaves; i++) {
+        if (finished[i])
+            break;
+        printf("prematurely finishing %i\n", i);
+        MPI_Send(job, sizeof(Job), MPI_BYTE, i, COMPUTATION_TAG, MPI_COMM_WORLD);
+        finished[i] = true;
+    }
+    // wait for the rest of results
+    for(i = 0; i < min(nmoves, slaves); i++) {
+        MPI_Recv(&score, 1, MPI_INT, MPI_ANY_SOURCE, RESULT_TAG, MPI_COMM_WORLD, &status);
+        if(score >= alpha) {
+            alpha = score;
+            best_move = current_move[status.MPI_SOURCE];
+            // printf("best move updated: %d\n", best_move);
         }
+        printf("received score %i from %i, alpha = %d\n", score, status.MPI_SOURCE, alpha);
+    }
+    // }
+    job->finished = true;
+    for (i=0; i<slaves; i++) {
+        if (finished[i])
+            break;
+        printf("finishing %i\n", i);
+        MPI_Send(job, sizeof(Job), MPI_BYTE, i, COMPUTATION_TAG, MPI_COMM_WORLD);
+    }
+    return best_move;
+}
+void slave()
+{
+	int score;
+	Job *job = malloc(sizeof(Job));
+    while (true) {
+    	// communication
+        MPI_Recv(job, sizeof(Job), MPI_BYTE, MASTER_ID, COMPUTATION_TAG, MPI_COMM_WORLD, &status);
+        if(job->finished) {
+            printf("job %d finished\n", myid);
+            break;
+        }
+        // computation
+        score = -(alphabeta(job->player, job->board, job->depth, job->alpha, job->beta)->score);
+        MPI_Send(&score, 1, MPI_INT, MASTER_ID, RESULT_TAG, MPI_COMM_WORLD);
+    }
+}
+void play(char player, int depth)
+{
+	int best_move;
+	char *board = create_board();
 
-        job->finished = true;
-        for (i=n+1; i<size; i++) {
-            if (finished[i])
-                break;
-            printf("prematurely finishing %i\n", i);
-            MPI_Send(job, sizeof(Job), MPI_BYTE, i, 1, MPI_COMM_WORLD);
-            finished[i] = true;
-        }
-        // wait for the rest of results
-        for(i = 0; i < min(n, size - 1); i++) {
-            MPI_Recv(&score, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
-            if(score >= alpha) {
-                alpha = score;
-                best_move = current_move[status.MPI_SOURCE];
-                // printf("best move updated: %d\n", best_move);
-            }
-            printf("received score %i from %i, alpha = %d\n", score, status.MPI_SOURCE, alpha);
-        }
-        // }
-        job->finished = true;
-        for (i=1; i<size; i++) {
-            if (finished[i])
-                break;
-            printf("finishing %i\n", i);
-            MPI_Send(job, sizeof(Job), MPI_BYTE, i, 1, MPI_COMM_WORLD);
-        }
-        // break;
-        // printf("loop\n");
-        // }
+	if (myid == MASTER_ID) {
+	    printf("Before score: %d", evaluate(player, board));
+	    print_board(board);
+		best_move = master(player, board, depth);
 	} else {
-	    while (1) {
-	        MPI_Recv(job, sizeof(Job), MPI_BYTE, 0, 1, MPI_COMM_WORLD, &status);
-	        if(job->finished) {
-	            printf("job %d finished\n", rank);
-	            break;
-	        }
-	        score = -(alphabeta(job->player, job->board, job->depth, job->alpha, job->beta)->score);
-	        MPI_Send(&score, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
-
-	    }
-
+		slave();
 	}
+
 	MPI_Barrier(MPI_COMM_WORLD);
-	// int move = get_move(player, board);
-	if (rank == 0) {
+
+	if (myid == MASTER_ID) {
 	    printf("move: %s\n", index2label(best_move));
 	    make_move(best_move, player, board);
 
 	    printf("After score: %d", evaluate(player, board));
 	    print_board(board);
 	}
-
 }
 #endif
 
@@ -480,15 +495,19 @@ int main(int argc, char *argv[])
 {
 
 #ifdef MPI_ENABLED
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+	int nprocs;
 
-    play(WHITE, 8);
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &myid);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+
+    slaves = nprocs - 1;
+
+    play(WHITE, 10);
 
     MPI_Finalize();
 #else
-    play_serial(WHITE, 10);
+    play_serial(WHITE, 8);
 #endif
     return 0;
 }
