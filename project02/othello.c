@@ -5,6 +5,7 @@
 #include "othello.h"
 #ifdef MPI_ENABLED
 #include "mpi.h"
+MPI_Status status;
 #endif
 
 #define min(a,b) (a < b ? a : b)
@@ -15,14 +16,6 @@
 #define ROWS HEIGHT-2
 #define COLS WIDTH-2
 #define SQUARES WIDTH*HEIGHT
-
-char *INITIAL_WHITE_POS[] = {"b3", "b5", "b6", "c4", "c5", "d4", "d5", "d6","d7","e2","e3","e4","e6","f3","g3","g4","g6","h4","h5"};;
-char *INITIAL_BLACK_POS[] = {"a4", "a5", "a6", "b4", "c1","c3", "d1", "d2", "d3","e5", "e7", "e8","f2","f4","f5","g5","h3","h6"};
-
-char EMPTY = '.';
-char BLACK = '@';
-char WHITE = 'o';
-char OUTER = '?';
 
 #define UP -WIDTH
 #define DOWN WIDTH
@@ -35,10 +28,15 @@ char OUTER = '?';
 
 int DIRECTIONS[] = {UP, UP_RIGHT, RIGHT, DOWN_RIGHT, DOWN, DOWN_LEFT, LEFT, UP_LEFT};
 
+char *INITIAL_WHITE_POS[] = {"b3", "b5", "b6", "c4", "c5", "d4", "d5", "d6","d7","e2","e3","e4","e6","f3","g3","g4","g6","h4","h5"};;
+char *INITIAL_BLACK_POS[] = {"a4", "a5", "a6", "b4", "c1","c3", "d1", "d2", "d3","e5", "e7", "e8","f2","f4","f5","g5","h3","h6"};
+
+char EMPTY = '.';
+char BLACK = '@';
+char WHITE = 'o';
+char OUTER = '?';
+
 int rank, size;
-#ifdef MPI_ENABLED
-MPI_Status status;
-#endif
 
 struct _Tuple {
     int move;
@@ -72,7 +70,7 @@ int label2index(const char *label)
 
 char* initial_board()
 {
-    char *board = malloc(sizeof(int)*(SQUARES));
+    char *board = malloc(sizeof(char)*(SQUARES));
     size_t i;
     for (i=0; i<SQUARES; i++) {
         if (i >= WIDTH+1 &&
@@ -119,8 +117,8 @@ void print_board(char *board)
 
 char* copy_board(char *src)
 {
-    char *copy = malloc(sizeof(int)*SQUARES);
-    memcpy(copy, src, sizeof(int)*SQUARES);
+    char *copy = malloc(sizeof(char)*SQUARES);
+    memcpy(copy, src, sizeof(char)*SQUARES);
     return copy;
 }
 
@@ -142,9 +140,10 @@ int evaluate(char player, char *board)
 
 bool is_legal(int move, char player, char *board)
 {
-    if (board[move] != EMPTY) return false;
+    if (!is_valid(move) || board[move] != EMPTY) return false;
     bool has_bracket = false;
     size_t i;
+    // printf("sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0] = %d\n", sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0]));
     for (i=0; i<sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0]); i++) {
         int d = DIRECTIONS[i];
         if (find_bracket(move, player, board, d) > -1) {
@@ -179,7 +178,7 @@ int get_move(char player, char *board, int depth)
 int find_bracket(int square, char player, char *board, int direction)
 {
     int bracket = square + direction;
-    if (board[bracket] == player) return -1;
+    if (!is_valid(bracket) || board[bracket] == player) return -1;
 
     char opp = opponent(player);
     while (board[bracket] == opp) {
@@ -346,17 +345,18 @@ void play(char player, int depth)
 
     Job *job = malloc(sizeof(Job));
 
+
     if (rank == 0) {
-        int n, i;
-        int *moves;
-        int current_move[size];
-        bool finished[size];
+
         printf("Before score: %d", evaluate(player, board));
         print_board(board);
-
-        for(i = 0; i < size; i++) {
-            finished[i] = false;
-        }
+	    int n, i, j;
+	    int *moves;
+	    int current_move[size];
+	    bool finished[size];
+	    for(i = 0; i < size; i++) {
+	        finished[i] = false;
+	    }
         // while (1) {
         moves = generate_moves(player, board, &n);
         if (moves == NULL) printf("no more moves\n");
@@ -366,13 +366,20 @@ void play(char player, int depth)
                 -beta,
                 -alpha);
         alpha = -(ret->score);
+        best_move = moves[0];
         // printf("setting alpha to %d\n", alpha);
         printf("move num: %d\n", n);
         printf("size: %d\n", size);
+        printf("job size: %lu\n", sizeof(Job));
+
         for (i=1; i<min(n, size); i++) {
             // char *new_board = make_move(moves[i], player, copy_board(board));
             job->player = opponent(player);
-            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(int)*SQUARES);
+            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
+            // for (j=0; j<SQUARES; j++) {
+            // 	job->board[i] = board[i];
+            // }
+            // make_move(moves[i], player, job->board);
             // int j;
             // for (j=0; j<SQUARES; j++) {
             // 	printf("%c ", job->board[j]);
@@ -397,7 +404,11 @@ void play(char player, int depth)
                 best_move = current_move[status.MPI_SOURCE];
                 alpha = score;
             }
-            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(int)*SQUARES);
+            // for (j=0; j<SQUARES; j++) {
+            // 	job->board[i] = board[i];
+            // }
+            // make_move(moves[i], player, job->board);
+            memcpy(job->board, make_move(moves[i], player, copy_board(board)), sizeof(char)*SQUARES);
             // char *new_board = make_move(moves[i], player, copy_board(board));
             job->player = opponent(player);
             // job->board = *new_board;
@@ -414,7 +425,7 @@ void play(char player, int depth)
         for (i=n+1; i<size; i++) {
             if (finished[i])
                 break;
-            printf("finishing %i\n", i);
+            printf("prematurely finishing %i\n", i);
             MPI_Send(job, sizeof(Job), MPI_BYTE, i, 1, MPI_COMM_WORLD);
             finished[i] = true;
         }
@@ -439,27 +450,28 @@ void play(char player, int depth)
         // break;
         // printf("loop\n");
         // }
-} else {
-    while (1) {
-        MPI_Recv(job, sizeof(Job), MPI_BYTE, 0, 1, MPI_COMM_WORLD, &status);
-        if(job->finished) {
-            printf("job %d finished\n", rank);
-            break;
-        }
-        score = -(alphabeta(job->player, job->board, job->depth, job->alpha, job->beta)->score);
-        MPI_Send(&score, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
+	} else {
+	    while (1) {
+	        MPI_Recv(job, sizeof(Job), MPI_BYTE, 0, 1, MPI_COMM_WORLD, &status);
+	        if(job->finished) {
+	            printf("job %d finished\n", rank);
+	            break;
+	        }
+	        score = -(alphabeta(job->player, job->board, job->depth, job->alpha, job->beta)->score);
+	        MPI_Send(&score, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
 
-    }
+	    }
 
-}
+	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	// int move = get_move(player, board);
+	if (rank == 0) {
+	    printf("move: %s\n", index2label(best_move));
+	    make_move(best_move, player, board);
 
-// int move = get_move(player, board);
-if (rank == 0) {
-    make_move(best_move, player, board);
-    printf("move: %s\n", index2label(best_move));
-    printf("After score: %d", evaluate(player, board));
-    print_board(board);
-}
+	    printf("After score: %d", evaluate(player, board));
+	    print_board(board);
+	}
 
 }
 #endif
@@ -472,11 +484,11 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    play(WHITE, 10);
+    play(WHITE, 8);
 
     MPI_Finalize();
 #else
-    play_serial(WHITE, 8);
+    play_serial(WHITE, 10);
 #endif
     return 0;
 }
