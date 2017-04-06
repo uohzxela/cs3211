@@ -454,17 +454,30 @@ void slave()
 {
 	int score;
 	Job *job = malloc(sizeof(Job));
+	long long before, after;
     while (true) {
     	// communication
+    	before = wall_clock_time();
         MPI_Recv(job, sizeof(Job), MPI_BYTE, MASTER_ID, COMPUTATION_TAG, MPI_COMM_WORLD, &status);
+        after = wall_clock_time();
         if(job->finished) {
-            printf("job %d finished\n", myid);
+            // printf("job %d finished\n", myid);
             break;
         }
+        comm_time += after - before;
         // computation
+        before = wall_clock_time();
         score = -(alphabeta(job->player, job->board, job->depth, job->alpha, job->beta)->score);
+        after = wall_clock_time();
+        comp_time += after - before;
+
+        before = wall_clock_time();
         MPI_Send(&score, 1, MPI_INT, MASTER_ID, RESULT_TAG, MPI_COMM_WORLD);
+        after = wall_clock_time();
+        comm_time += after - before;
     }
+
+    fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
 }
 void play(char player, int depth)
 {
