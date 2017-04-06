@@ -506,10 +506,10 @@ void play(char player, int depth)
 
 int main(int argc, char *argv[])
 {
-
+	long long before, after;
 #ifdef MPI_ENABLED
 	int nprocs;
-
+	before = wall_clock_time();
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
@@ -517,10 +517,17 @@ int main(int argc, char *argv[])
     slaves = nprocs - 1;
 
     play(WHITE, 10);
-
+    after = wall_clock_time();
+    if (myid == MASTER_ID) {
+    	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
+    }
     MPI_Finalize();
+
 #else
-    play_serial(WHITE, 8);
+    before = wall_clock_time();
+    play_serial(WHITE, 10);
+    after = wall_clock_time();
+    fprintf(stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
 #endif
     return 0;
 }
