@@ -405,6 +405,8 @@ int master(char player, char *board, int depth)
 
     int n_moves, i;
     int *move_list = generate_moves(player, board, &n_moves);
+    int *slave_list = malloc(sizeof(int) * slaves);
+    for (i=0;i<slaves;i++) slave_list[i] = true;
     // bool active_list[slaves] = {false};
 
     int alpha = -9999, beta = 9999;
@@ -432,7 +434,7 @@ int master(char player, char *board, int depth)
         
         MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
         printf(" --- MASTER: sent subproblem to %i\n", slave);
-        // active_list[slave] = true;
+        // slave_list[slave] = true;
     }
     // if num of slaves < num of moves
     for (i=slaves; i<n_moves; i++) {
@@ -469,9 +471,18 @@ int master(char player, char *board, int depth)
     }
    	printf(" --- MASTER: received final result\n");
 
-   	for (i=0; i<slaves; i++) {
-   		MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
+   	int from;
+   	while (!is_slave_list_empty(slave_list)) {
+   		print_slave_list(slave_list);
+	   	for (i=0; i<slaves; i++) {
+
+	   		if (!slave_list[i]) continue;
+	   		MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
+	   		MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
+	   		slave_list[status.MPI_SOURCE] = false;
+	   	}
    	}
+
    	// exit(1);
     return best_move;
 }
@@ -533,6 +544,7 @@ void slave()
 	    			after = wall_clock_time();
 	    			comm_time += after - before;
 	    			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
+	    			MPI_Send(&myid, 1, MPI_INT, MASTER_ID, TERMINATION_TAG, MPI_COMM_WORLD);
 	    			return;
 	    		} else {
 	    			// drop message without processing
@@ -613,6 +625,10 @@ void slave()
 					send_cutoff(slave_list);
 					break;
 				}
+				if (status.MPI_TAG == TERMINATION_TAG) {
+					printf(" --- SLAVE %d: received termination!!!!!!!!!!!!!!!\n", myid);
+					return;
+				}
     		}
     		after = wall_clock_time();
     		comm_time += after - before;
@@ -654,7 +670,7 @@ void slave()
     	printf(" --- SLAVE %d: sent a result to %d\n", myid, master);
     	// send_return(master, tuple(alpha, best_move));
     	idle = true;
-    	send_random_request();
+    	// send_random_request();
 
     }
 
