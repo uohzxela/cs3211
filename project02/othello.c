@@ -47,6 +47,7 @@ int myid, slaves;
 #define CUTOFF_TAG 4
 #define CANCELLATION_TAG 5
 #define TERMINATION_TAG 6
+#define SHARE_TAG 7
 
 long long comm_time = 0;
 long long comp_time = 0;
@@ -366,14 +367,20 @@ void send_cutoff(int *slave_list)
 void send_cancellation(int slave)
 {
 	MPI_Send(&myid, 1, MPI_INT, slave, CANCELLATION_TAG, MPI_COMM_WORLD);
-	printf(" --- SLAVE %d: sent a cancellation to %d\n", myid, slave);
+	// printf(" --- %s %d: sent a cancellation to %d\n", myid == MASTER_ID ? "MASTER" : "SLAVE", myid, slave);
 }
 
 void send_random_request() 
 {
 	int slave = random_slave();
 	MPI_Send(&myid, 1, MPI_INT, slave, REQUEST_TAG, MPI_COMM_WORLD);
-	printf(" --- SLAVE %d: sent a request to %d\n", myid, slave);
+	// printf(" --- SLAVE %d: sent a request to %d\n", myid, slave);
+}
+
+void send_request_to_master()
+{
+	MPI_Send(&myid, 1, MPI_INT, MASTER_ID, REQUEST_TAG, MPI_COMM_WORLD);
+	printf(" --- SLAVE %d: sent a request to master\n", myid);
 }
 
 void send_return(int master, Tuple *result)
@@ -405,26 +412,27 @@ int master(char player, char *board, int depth)
 
     int n_moves, i;
     int *move_list = generate_moves(player, board, &n_moves);
+    printf("n_moves: %d\n", n_moves);
     int *slave_list = malloc(sizeof(int) * slaves);
     for (i=0;i<slaves;i++) slave_list[i] = true;
     // bool active_list[slaves] = {false};
 
     int alpha = -9999, beta = 9999;
-    int best_move;
-    Tuple *result = alphabeta(opponent(player),
-            make_move(move_list[0], player, copy_board(board)),
-            depth-1,
-            -beta,
-            -alpha);
-    alpha = -(result->score);
-    best_move = move_list[0];
+    int best_move = move_list[0];
+    // Tuple *result = alphabeta(opponent(player),
+    //         make_move(move_list[0], player, copy_board(board)),
+    //         depth-1,
+    //         -beta,
+    //         -alpha);
+    // alpha = -(result->score);
+
 
     Job *job = malloc(sizeof(Job));
-    result = malloc(sizeof(Tuple));
+    Tuple *result = malloc(sizeof(Tuple));
 
-    for (i=1; i<min(n_moves, slaves); i++) {
+    for (i=0; i<min(n_moves, slaves); i++) {
     	int move = i;
-    	int slave = i-1;
+    	int slave = i;
         job->player = opponent(player);
         memcpy(job->board, make_move(move_list[move], player, copy_board(board)), sizeof(char)*SQUARES);
         job->depth = depth-1;
@@ -457,10 +465,12 @@ int master(char player, char *board, int depth)
         printf(" --- MASTER: sent subproblem(2) to %i\n", status.MPI_SOURCE);
         // current_move[status.MPI_SOURCE] = moves[i];
     }
-    for (i=n_moves; i<slaves; i++) {
-    	send_cancellation(i);
-    }
-    for(i = 1; i < min(n_moves, slaves); i++) {
+    // for (i=n_moves; i<slaves; i++) {
+    // 	send_cancellation(i);
+
+    // }
+
+    for(i = 0; i < min(n_moves, slaves); i++) {
         MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
         if(result->score >= alpha) {
             alpha = result->score;
@@ -511,7 +521,8 @@ void slave()
 	    	// 	dirty = true;
     		// }
     		// if (myid == 0)
-    		printf(" --- SLAVE %d: waiting for message\n", myid);
+	    		// send_random_request();
+    		// printf(" --- SLAVE %d: waiting for message\n", myid);
     			MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
     		// printf(" --- SLAVE %d: probing message queue\n", myid);
     		// probe_message_queue(&has_message);
@@ -527,19 +538,23 @@ void slave()
 	    		} else if (status.MPI_TAG == CANCELLATION_TAG) {
 
 	    			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, CANCELLATION_TAG, MPI_COMM_WORLD, &status);
-	    			printf(" --- SLAVE %d: received a cancellation from %d\n", myid, status.MPI_SOURCE);
+	    			// printf(" --- SLAVE %d: received a cancellation from %d\n", myid, status.MPI_SOURCE);
 	    			// if (myid==0)printf(" --- SLAVE %d: received a cancellation from %d\n", myid, status.MPI_SOURCE);
 	    			// delay a bit?
 	    			// request randomly again
 		    		// MPI_Send(&myid, 1, MPI_INT, random_slave(), REQUEST_TAG, MPI_COMM_WORLD);
 		    		// send_random_request();
+	    		} else if (status.MPI_TAG == SHARE_TAG) {
+	    			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, SHARE_TAG, MPI_COMM_WORLD, &status);
+	    			// printf(" --- SLAVE %d: received a request from %d\n", myid, status.MPI_SOURCE);
+	    			MPI_Send(&myid, 1, MPI_INT, status.MPI_SOURCE, REQUEST_TAG, MPI_COMM_WORLD);
+	    			// send_cancellation(status.MPI_SOURCE);
+
 	    		} else if (status.MPI_TAG == REQUEST_TAG) {
 	    			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, REQUEST_TAG, MPI_COMM_WORLD, &status);
-	    			printf(" --- SLAVE %d: received a request from %d\n", myid, status.MPI_SOURCE);
-	    			// MPI_Send(&myid, 1, MPI_INT, status.MPI_SOURCE, CANCELLATION_TAG, MPI_COMM_WORLD);
 	    			send_cancellation(status.MPI_SOURCE);
-
-	    		} else if (status.MPI_TAG == TERMINATION_TAG) {
+	    		}
+	    		else if (status.MPI_TAG == TERMINATION_TAG) {
 	    			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
 	    			after = wall_clock_time();
 	    			comm_time += after - before;
@@ -550,14 +565,15 @@ void slave()
 	    			// drop message without processing
 
 	    			MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-	    			printf(" --- SLAVE %d: received an unknown message from %d\n", myid, status.MPI_SOURCE);
+	    			printf(" --- SLAVE %d: received an unknown message (%d) from %d\n", myid, status.MPI_TAG, status.MPI_SOURCE);
 	    		}
-	    		send_random_request();
+
  			// } 
 
  			// if (!has_message || status.MPI_TAG != SUBPROBLEM_TAG){
 	    		// request randomly
 	    		// send_random_request();
+	    		// send_request_to_master();
 	    		// MPI_Send(&myid, 1, MPI_INT, random_slave(), REQUEST_TAG, MPI_COMM_WORLD);
  			// }
 
@@ -579,18 +595,23 @@ void slave()
     			break;
     		}
     		before = wall_clock_time();
+    		slave = random_slave();
+    		MPI_Send(&myid, 1, MPI_INT, slave, SHARE_TAG, MPI_COMM_WORLD);
+
+    		if(myid==9) printf(" --- SLAVE %d: sought help from %d\n", myid, slave);
     		MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &has_message, &status);
     		if (has_message) {
 				if (status.MPI_TAG == REQUEST_TAG) {
-
+					int is_idle;
 					MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, REQUEST_TAG, MPI_COMM_WORLD, &status);
-					printf(" --- SLAVE %d: received a request from %d\n", myid, status.MPI_SOURCE);
-					slave = status.MPI_SOURCE;
-					if (i == 0 || slave_list[slave]) {
-						send_cancellation(slave);
+					// printf(" --- SLAVE %d: received a request from %d\n", myid, status.MPI_SOURCE);
+					// slave = status.MPI_SOURCE;
+					// if (i == 0 || slave_list[slave]) {
+						// send_cancellation(slave);
 						// printf(" --- SLAVE %d: sent a cancellation to %d\n", myid, status.MPI_SOURCE);
 						// MPI_Send(&myid, 1, MPI_INT, slave, CANCELLATION_TAG, MPI_COMM_WORLD);
-					} else if (i < n_moves) {
+					if (i > 0) {
+						int slave = status.MPI_SOURCE;
 						slave_list[slave] = true;
 						// TODO: send subproblem(i) to requester
 						memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
@@ -599,14 +620,14 @@ void slave()
 						job->alpha = -beta;
 						job->beta = -alpha;
 						MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
-						printf(" --- SLAVE %d: sent a subproblem to %d\n", myid, slave);
+						if(myid==9) printf(" --- SLAVE %d: sent a subproblem to %d\n", myid, slave);
 						continue; // don't evaluate current move
 					}
 				}
 				if (status.MPI_TAG == RETURN_TAG) {
 					// react_upon_return()
 					MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
-					printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+					if(myid==9)printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
 					slave_list[status.MPI_SOURCE] = false;
 					// TODO: 
 					if (result->score > alpha) {
@@ -634,7 +655,7 @@ void slave()
     		comm_time += after - before;
     		// i++;
     		// if (i >= n_moves) continue;
-    		printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
+    		if(myid==9)printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
     		// TODO: evaluate current move
     		before = wall_clock_time();
 	        Tuple *ret = alphabeta(opponent(player),
@@ -714,7 +735,7 @@ int main(int argc, char *argv[])
 
     slaves = nprocs - 1;
 
-    play(WHITE, 10);
+    play(BLACK, 10);
     after = wall_clock_time();
     if (myid == MASTER_ID) {
     	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
