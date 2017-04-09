@@ -46,6 +46,7 @@ int myid, slaves;
 #define REQUEST_TAG 3
 #define CUTOFF_TAG 4
 #define CANCELLATION_TAG 5
+#define TERMINATION_TAG 6
 
 long long comm_time = 0;
 long long comp_time = 0;
@@ -365,6 +366,10 @@ int master(char player, char *board, int depth)
     printf(" --- MASTER: sending first job to SLAVE 0\n");
     MPI_Recv(result, sizeof(Tuple), MPI_BYTE, 0, RETURN_TAG, MPI_COMM_WORLD, &status);
    	printf(" --- MASTER: received final result\n");
+   	int i;
+   	for (i=0; i<slaves; i++) {
+   		MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
+   	}
    	// exit(1);
     return result->move;
 }
@@ -431,7 +436,7 @@ void slave()
 	int dirty = false;
 	// TODO: enforce evaluation limit
     while (true) {
-    	
+    	before = wall_clock_time();
     	while (idle) {
     		if (myid != 0 || dirty) {
 	    		send_random_request();
@@ -463,6 +468,12 @@ void slave()
 	    			// MPI_Send(&myid, 1, MPI_INT, status.MPI_SOURCE, CANCELLATION_TAG, MPI_COMM_WORLD);
 	    			send_cancellation(status.MPI_SOURCE);
 
+	    		} else if (status.MPI_TAG == TERMINATION_TAG) {
+	    			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
+	    			after = wall_clock_time();
+	    			comm_time += after - before;
+	    			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
+	    			return;
 	    		} else {
 	    			// drop message without processing
 	    			MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
@@ -476,6 +487,8 @@ void slave()
  			// }
 
     	}
+    	after = wall_clock_time();
+    	comm_time += after - before;
 
     	player = job->player;
     	board = job->board;
@@ -490,6 +503,7 @@ void slave()
     			send_cutoff(slave_list);
     			break;
     		}
+    		before = wall_clock_time();
     		MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &has_message, &status);
     		if (has_message) {
 				if (status.MPI_TAG == REQUEST_TAG) {
@@ -537,10 +551,13 @@ void slave()
 					break;
 				}
     		}
+    		after = wall_clock_time();
+    		comm_time += after - before;
     		// i++;
     		// if (i >= n_moves) continue;
     		printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
     		// TODO: evaluate current move
+    		before = wall_clock_time();
 	        Tuple *ret = alphabeta(opponent(player),
 	                make_move(move_list[i], player, copy_board(board)),
 	                depth-1,
@@ -551,6 +568,8 @@ void slave()
 	            alpha = score;
 	            best_move = move_list[i];
 	        }
+	        after = wall_clock_time();
+	        comp_time += after - before;
     	}
     	// subproblem finished
     	// TODO: send RETURN to master
