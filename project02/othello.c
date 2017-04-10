@@ -592,6 +592,8 @@ void slave()
     	beta = job->beta;
     	depth = job->depth;
     	parent_move = job->move;
+    	
+    	before = wall_clock_time();
     	move_list = generate_moves(player, board, &n_moves);
     	printf(" --- SLAVE %d: %d moves\n", myid, n_moves);
 
@@ -604,13 +606,15 @@ void slave()
 		            -alpha);
 		    alpha = -(ret->score);
 		}
-
+		after = wall_clock_time();
+		comp_time += after - before;
 
 	    // if (alpha >= beta) {
 	    // 	printf(" --- SLAVE %d: CUTOFF\n", myid);
 	    // 	continue;
 	    // }
 
+		before = wall_clock_time();
 	    for (i=0; i<min(n_children, n_moves-1); i++) {
 	    	if (alpha >= beta) break;
 	    	int move_index = i+1;
@@ -626,6 +630,7 @@ void slave()
 	        active_list[(child % (myid * MAX_CHILDREN)) - 1] = true;
 	        printf(" --- SLAVE %d: sent subproblem to child %i\n", myid, child);
 	    }
+	    comm_time += wall_clock_time() - before;
 
     	for (i=n_children; i<n_moves; i++) {
     		if (alpha >= beta) {
@@ -718,6 +723,7 @@ void slave()
     	// 	is_cutoff = false;
     	// 	continue;
     	// }
+    	before = wall_clock_time();
     	while (has_active_children(active_list, n_children)) {
     		printf(" --- SLAVE %d: waiting for result\n", myid);
     		// print_slave_list(slave_list);
@@ -733,6 +739,7 @@ void slave()
     	result->move = parent_move;
     	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
     	printf(" --- SLAVE %d: sent a result to %d\n", myid, master);
+    	comm_time += wall_clock_time() - before;
     	// send_return(master, tuple(alpha, best_move));
     	// idle = true;
     	// MPI_Send(&myid, 1, MPI_INT, MASTER_ID, SET_INACTIVE_TAG, MPI_COMM_WORLD);
