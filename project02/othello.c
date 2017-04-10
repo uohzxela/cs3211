@@ -641,14 +641,22 @@ void slave()
 					MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
 					printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
 					// slave_list[status.MPI_SOURCE] = false;
-					active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
+					// active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
 
 					if (-(result->score) >= alpha) {
 						alpha = -(result->score);
 					}
-					// TODO: send subproblem to child again
-					// mark child as active
-					// continue
+			        job->player = opponent(player);
+			        memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
+			        job->depth = depth-1;
+			        job->alpha = -beta;
+			        job->beta = -alpha;
+
+			        // printf(" --- SLAVE %d: sending subproblem to child %d\n", myid, child);
+			        MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+			        active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = true;
+			        printf(" --- SLAVE %d: sent subproblem to child %i\n", myid, status.MPI_SOURCE);
+					continue;
 				}
 				if (status.MPI_TAG == CUTOFF_TAG) {
 					MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, CUTOFF_TAG, MPI_COMM_WORLD, &status);
@@ -692,9 +700,8 @@ void slave()
 	                depth-1,
 	                -beta,
 	                -alpha);
-	        score = -(ret->score);
-	        if (score >= alpha) {
-	            alpha = score;
+	        if (-(ret->score) >= alpha) {
+	            alpha = -(ret->score);
 	        }
 	        after = wall_clock_time();
 	        comp_time += after - before;
