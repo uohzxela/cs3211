@@ -38,8 +38,8 @@ char BLACK = '@';
 char WHITE = 'o';
 char OUTER = '?';
 
-int myid, slaves;
-#define MASTER_ID slaves
+int myid, slaves, nprocs;
+#define MASTER_ID 0
 
 #define SUBPROBLEM_TAG 1
 #define RETURN_TAG 2
@@ -48,6 +48,11 @@ int myid, slaves;
 #define CANCELLATION_TAG 5
 #define TERMINATION_TAG 6
 #define SHARE_TAG 7
+#define FIND_INACTIVE_TAG 8
+#define SET_INACTIVE_TAG 9
+#define STATUS_TAG 10
+
+#define MAX_CHILDREN 4
 
 long long comm_time = 0;
 long long comp_time = 0;
@@ -400,23 +405,51 @@ bool is_slave_list_empty(int *slave_list)
 void print_slave_list(int *slave_list)
 {
 	int i;
-	printf(" --- SLAVE %d: ", myid);
+	printf(" --- %s %d: ", myid == MASTER_ID ? "MASTER" : "SLAVE", myid);
 	for (i=0; i<slaves; i++) {
 		printf("%d:%s ", i, slave_list[i] ? "T" : "F");
 	}
 	printf("\n");
 }
+bool has_active_slaves(int *slave_list)
+{
+	int i;
+	for (i=0; i<slaves; i++) {
+		if (slave_list[i]) return true;
+	}
+	return false;
+}
+int* create_children_list(int *n_children)
+{	
+	*n_children = 0;
+	int i;
+    int *children_list = malloc(sizeof(int) * MAX_CHILDREN);
+    for (i=0; i<MAX_CHILDREN; i++) {
+    	if ((myid * MAX_CHILDREN + 1 + i) < nprocs) {
+    		children_list[(*n_children)++] = myid * MAX_CHILDREN + 1 + i;
+    	} 
+    }
+    return children_list;
+}
+bool has_active_children(int *active_list, int n_children)
+{
+	int i;
+	for (i=0; i<n_children; i++) {
+		if (active_list[i]) return true;
+	}
+	return false;
+}
 int master(char player, char *board, int depth)
 {
-
-
-    int n_moves, i;
+    int n_moves, i, from, idle, n_children = 0;
     int *move_list = generate_moves(player, board, &n_moves);
     printf("n_moves: %d\n", n_moves);
-    int *slave_list = malloc(sizeof(int) * slaves);
-    for (i=0;i<slaves;i++) slave_list[i] = true;
-    // bool active_list[slaves] = {false};
-
+    int *children_list = create_children_list(&n_children);
+    printf(" --- MASTER: children list [");
+    for (i=0; i<n_children; i++) {
+    	printf("%d ", children_list[i]);
+    }
+    printf("]\n");
     int alpha = -9999, beta = 9999;
     int best_move = move_list[0];
     // Tuple *result = alphabeta(opponent(player),
@@ -428,11 +461,11 @@ int master(char player, char *board, int depth)
 
 
     Job *job = malloc(sizeof(Job));
-    Tuple *result = malloc(sizeof(Tuple));
+	Tuple *result = malloc(sizeof(Tuple));
 
-    for (i=0; i<min(n_moves, slaves); i++) {
+    for (i=0; i<min(n_moves, n_children); i++) {
     	int move = i;
-    	int slave = i;
+    	int child = children_list[i];
         job->player = opponent(player);
         memcpy(job->board, make_move(move_list[move], player, copy_board(board)), sizeof(char)*SQUARES);
         job->depth = depth-1;
@@ -440,18 +473,19 @@ int master(char player, char *board, int depth)
         job->beta = -alpha;
 
         
-        MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
-        printf(" --- MASTER: sent subproblem to %i\n", slave);
+        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+        printf(" --- MASTER: sent subproblem to %i\n", child);
         // slave_list[slave] = true;
+        // MPI_Recv(&idle, 1, MPI_INT, slave, STATUS_TAG, MPI_COMM_WORLD, &status);
     }
-    // if num of slaves < num of moves
-    for (i=slaves; i<n_moves; i++) {
+    // if num of children < num of moves
+    for (i=n_children; i<n_moves; i++) {
         MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
         printf(" --- MASTER: received result from %i\n", status.MPI_SOURCE);
 
-        if (result->score >= alpha) {
+        if (-result->score >= alpha) {
             best_move = result->move;
-            alpha = result->score;
+            alpha = -result->score;
         }
 
         memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
@@ -463,42 +497,206 @@ int master(char player, char *board, int depth)
         
         MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD);
         printf(" --- MASTER: sent subproblem(2) to %i\n", status.MPI_SOURCE);
+        // MPI_Recv(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD, &status);
         // current_move[status.MPI_SOURCE] = moves[i];
     }
-    // for (i=n_moves; i<slaves; i++) {
-    // 	send_cancellation(i);
-
-    // }
-
-    for(i = 0; i < min(n_moves, slaves); i++) {
+    for(i = 0; i < min(n_moves, n_children); i++) {
         MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
-        if(result->score >= alpha) {
-            alpha = result->score;
+        if(-result->score >= alpha) {
+            alpha = -result->score;
             best_move = result->move;
+            // slave_list[status.MPI_SOURCE] = false;
             // printf("best move updated: %d\n", best_move);
         }
         printf("--- MASTER: received result from %i, alpha = %d\n", status.MPI_SOURCE, alpha);
     }
    	printf(" --- MASTER: received final result\n");
 
-   	int from;
-   	while (!is_slave_list_empty(slave_list)) {
-   		print_slave_list(slave_list);
-	   	for (i=0; i<slaves; i++) {
+   	// int from;
+   	// while (!is_slave_list_empty(slave_list)) {
+   	// 	// print_slave_list(slave_list);
+	   // 	for (i=0; i<slaves; i++) {
 
-	   		if (!slave_list[i]) continue;
-	   		MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
-	   		MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
-	   		slave_list[status.MPI_SOURCE] = false;
-	   	}
-   	}
+	   // 		if (!slave_list[i]) continue;
+	   // 		MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
+	   // 		MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
+	   // 		slave_list[status.MPI_SOURCE] = false;
+	   // 	}
+   	// }
 
    	// exit(1);
     return best_move;
 }
 
-
 void slave()
+{
+	int score, slave, n_moves, i, from, best_move, n_children;
+	bool idle = true, has_message = false;
+	long long before, after;
+	int alpha, beta, depth;
+	char player, *board;
+
+	int *move_list;
+	int *children_list = create_children_list(&n_children);
+	int *active_list = malloc(sizeof(int) * n_children);
+	for (i=0;i<n_children;i++) active_list[i] = false;
+	int master = (myid-1) / MAX_CHILDREN;
+	Job *job = malloc(sizeof(Job));
+	Tuple *result = malloc(sizeof(Tuple));
+	// int dirty = false;
+	// TODO: enforce evaluation limit
+
+	while (true) {
+		before = wall_clock_time();
+		while (true) {
+			MPI_Probe(master, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+			if (status.MPI_TAG == SUBPROBLEM_TAG) {
+				MPI_Recv(job, sizeof(Job), MPI_BYTE, master, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
+				printf(" --- SLAVE %d: received a subproblem from %d\n", myid, status.MPI_SOURCE);
+				// MPI_Send(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD);
+				// master = status.MPI_SOURCE;
+				break;
+
+			} else {
+				MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+				printf(" --- SLAVE %d: received an unknown message (%d) from %d\n", myid, status.MPI_TAG, status.MPI_SOURCE);
+			}
+		}
+
+    	after = wall_clock_time();
+    	comm_time += after - before;
+
+    	player = job->player;
+    	board = job->board;
+    	alpha = job->alpha;
+    	beta = job->beta;
+    	depth = job->depth;
+    	move_list = generate_moves(player, board, &n_moves);
+
+	    Tuple *ret = alphabeta(opponent(player),
+	            make_move(move_list[0], player, copy_board(board)),
+	            depth-1,
+	            -beta,
+	            -alpha);
+	    alpha = -(ret->score);
+	    best_move = move_list[0];
+	    for (i=1; i<min(n_children, n_moves); i++) {
+	    	int move = i;
+	    	int child = children_list[i];
+	        job->player = opponent(player);
+	        memcpy(job->board, make_move(move_list[move], player, copy_board(board)), sizeof(char)*SQUARES);
+	        job->depth = depth-1;
+	        job->alpha = -beta;
+	        job->beta = -alpha;
+
+	        printf("sending job to child %d\n", child);
+	        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+	        active_list[(child % (myid * MAX_CHILDREN)) - 1] = true;
+	        printf(" --- SLAVE %d: sent subproblem to %i\n", myid, child);
+	    }
+
+    	for (i=n_children; i<n_moves; i++) {
+    		if (alpha >= beta) {
+    			// TODO: send CUTOFF to children
+    			break;
+    		}
+    		before = wall_clock_time();
+    		// printf("probing\n");
+    		MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &has_message, &status);
+
+    		if (has_message) {
+				if (status.MPI_TAG == RETURN_TAG) {
+
+					MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
+					printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+					// slave_list[status.MPI_SOURCE] = false;
+					active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
+
+					if (-result->score > alpha) {
+						alpha = -result->score;
+						best_move = result->move;
+					}
+					// TODO: send subproblem to child again
+					// mark child as active
+					// continue
+				}
+				// if (status.MPI_TAG == CUTOFF_TAG) {
+				// 	MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, CUTOFF_TAG, MPI_COMM_WORLD, &status);
+				// 	printf(" --- SLAVE %d: received a cutoff from %d\n", myid, status.MPI_SOURCE);
+				// 	if (status.MPI_SOURCE != master) {
+				// 		printf(" --- SLAVE %d: false cutoff\n", myid);
+				// 		continue;
+				// 	}
+				// 	// assert from == master
+				// 	send_cutoff(slave_list);
+				// 	break;
+				// }
+				// if (status.MPI_TAG == TERMINATION_TAG) {
+	   //  			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
+	   //  			for (i=0; i<slaves; i++) {
+	   //  				if (slave_list[i]) {
+	   //  					MPI_Send(&myid, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD);
+	   //  					MPI_Recv(&from, 1, MPI_INT, i, TERMINATION_TAG, MPI_COMM_WORLD, &status);
+	   //  					slave_list[i] = false;
+	   //  				}
+	   //  			}
+	   //  			after = wall_clock_time();
+	   //  			comm_time += after - before;
+	   //  			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
+	   //  			MPI_Send(&myid, 1, MPI_INT, master, TERMINATION_TAG, MPI_COMM_WORLD);
+	   //  			return;
+				// }
+				if (status.MPI_TAG == SUBPROBLEM_TAG) {
+					MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
+					// MPI_Send(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD);
+				}
+    		}
+
+    		after = wall_clock_time();
+    		comm_time += after - before;
+			// printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
+    		before = wall_clock_time();
+	        Tuple *ret = alphabeta(opponent(player),
+	                make_move(move_list[i], player, copy_board(board)),
+	                depth-1,
+	                -beta,
+	                -alpha);
+	        score = -(ret->score);
+	        if (score >= alpha) {
+	            alpha = score;
+	            best_move = move_list[i];
+	        }
+	        after = wall_clock_time();
+	        comp_time += after - before;
+    	}
+    	// subproblem finished
+    	// TODO: send RETURN to master
+    	while (has_active_children(active_list, n_children)) {
+    		// printf(" --- SLAVE %d: waiting for result\n", myid);
+    		// print_slave_list(slave_list);
+			MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
+			// printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+			active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
+			// TODO: 
+			if (-result->score >= alpha) {
+				alpha = -result->score;
+				best_move = result->move;
+			}
+    	}
+    	result->score = alpha;
+    	result->move = best_move;
+    	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
+    	printf(" --- SLAVE %d: sent a result to %d\n", myid, master);
+    	// send_return(master, tuple(alpha, best_move));
+    	// idle = true;
+    	// MPI_Send(&myid, 1, MPI_INT, MASTER_ID, SET_INACTIVE_TAG, MPI_COMM_WORLD);
+    	// printf(" --- SLAVE %d: send inactive status to %d\n", myid, MASTER_ID);
+    	// send_random_request();
+    	// idle = true;
+    }	
+}
+
+void slave2()
 {
 	int score, master, slave, n_moves, i, from, best_move;
 	bool idle = true, has_message = false;
@@ -596,38 +794,42 @@ void slave()
     		}
     		before = wall_clock_time();
     		slave = random_slave();
-    		MPI_Send(&myid, 1, MPI_INT, slave, SHARE_TAG, MPI_COMM_WORLD);
 
-    		if(myid==9) printf(" --- SLAVE %d: sought help from %d\n", myid, slave);
+
+    		// if(myid==9) printf(" --- SLAVE %d: sought help from %d\n", myid, slave);
     		MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &has_message, &status);
+
     		if (has_message) {
-				if (status.MPI_TAG == REQUEST_TAG) {
-					int is_idle;
-					MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, REQUEST_TAG, MPI_COMM_WORLD, &status);
-					// printf(" --- SLAVE %d: received a request from %d\n", myid, status.MPI_SOURCE);
-					// slave = status.MPI_SOURCE;
-					// if (i == 0 || slave_list[slave]) {
-						// send_cancellation(slave);
-						// printf(" --- SLAVE %d: sent a cancellation to %d\n", myid, status.MPI_SOURCE);
-						// MPI_Send(&myid, 1, MPI_INT, slave, CANCELLATION_TAG, MPI_COMM_WORLD);
-					if (i > 0) {
-						int slave = status.MPI_SOURCE;
-						slave_list[slave] = true;
-						// TODO: send subproblem(i) to requester
-						memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
-						job->player = opponent(player);
-						job->depth = depth-1;
-						job->alpha = -beta;
-						job->beta = -alpha;
-						MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
-						if(myid==9) printf(" --- SLAVE %d: sent a subproblem to %d\n", myid, slave);
-						continue; // don't evaluate current move
-					}
-				}
+				// if (status.MPI_TAG == FIND_INACTIVE_TAG) {
+				// 	int is_idle;
+				// 	MPI_Recv(&slave, 1, MPI_INT, MASTER_ID, FIND_INACTIVE_TAG, MPI_COMM_WORLD, &status);
+				// 	printf(" --- SLAVE %d: found inactive slave %d\n", myid, slave);
+				// 	// slave = status.MPI_SOURCE;
+				// 	// if (i == 0 || slave_list[slave]) {
+				// 		// send_cancellation(slave);
+				// 		// printf(" --- SLAVE %d: sent a cancellation to %d\n", myid, status.MPI_SOURCE);
+				// 		// MPI_Send(&myid, 1, MPI_INT, slave, CANCELLATION_TAG, MPI_COMM_WORLD);
+				// 	if (i > 0) {
+				// 		// int slave = status.MPI_SOURCE;
+				// 		slave_list[slave] = true;
+				// 		// TODO: send subproblem(i) to requester
+				// 		memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
+				// 		job->player = opponent(player);
+				// 		job->depth = depth-1;
+				// 		job->alpha = -beta;
+				// 		job->beta = -alpha;
+				// 		MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+				// 		if(myid==9) printf(" --- SLAVE %d: sent a subproblem to %d\n", myid, slave);
+				// 		continue; // don't evaluate current move
+				// 	}
+				// }
+				// if (status.MPI_TAG == SHARE_TAG) {
+				// 	MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, SHARE_TAG, MPI_COMM_WORLD, &status);
+				// }
 				if (status.MPI_TAG == RETURN_TAG) {
 					// react_upon_return()
 					MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
-					if(myid==9)printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+					if(myid==9) {printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);}
 					slave_list[status.MPI_SOURCE] = false;
 					// TODO: 
 					if (result->score > alpha) {
@@ -647,15 +849,30 @@ void slave()
 					break;
 				}
 				if (status.MPI_TAG == TERMINATION_TAG) {
-					printf(" --- SLAVE %d: received termination!!!!!!!!!!!!!!!\n", myid);
+					// printf(" --- SLAVE %d: received termination!!!!!!!!!!!!!!!\n", myid);
+					// TODO: send termination to slaves
 					return;
 				}
+    		}
+    		MPI_Send(&myid, 1, MPI_INT, MASTER_ID, FIND_INACTIVE_TAG, MPI_COMM_WORLD);
+    		MPI_Recv(&slave, 1, MPI_INT, MASTER_ID, FIND_INACTIVE_TAG, MPI_COMM_WORLD, &status);
+    		if (slave > -1) {
+						slave_list[slave] = true;
+						// TODO: send subproblem(i) to requester
+						memcpy(job->board, make_move(move_list[i], player, copy_board(board)), sizeof(char)*SQUARES);
+						job->player = opponent(player);
+						job->depth = depth-1;
+						job->alpha = -beta;
+						job->beta = -alpha;
+						MPI_Send(job, sizeof(Job), MPI_BYTE, slave, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+						if(myid==9) printf(" --- SLAVE %d: sent a subproblem to %d\n", myid, slave);
+						continue; // don't evaluate current move
     		}
     		after = wall_clock_time();
     		comm_time += after - before;
     		// i++;
     		// if (i >= n_moves) continue;
-    		if(myid==9)printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
+    		// if(myid==9)printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
     		// TODO: evaluate current move
     		before = wall_clock_time();
 	        Tuple *ret = alphabeta(opponent(player),
@@ -673,24 +890,26 @@ void slave()
     	}
     	// subproblem finished
     	// TODO: send RETURN to master
-    	while (!is_slave_list_empty(slave_list)) {
-    		printf(" --- SLAVE %d: waiting for result\n", myid);
-    		print_slave_list(slave_list);
-			MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
-			printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
-			slave_list[status.MPI_SOURCE] = false;
-			// TODO: 
-			if (result->score > alpha) {
-				alpha = result->score;
-				best_move = result->move;
-			}
-    	}
+   //  	while (!is_slave_list_empty(slave_list)) {
+   //  		// printf(" --- SLAVE %d: waiting for result\n", myid);
+   //  		// print_slave_list(slave_list);
+			// MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
+			// // printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+			// slave_list[status.MPI_SOURCE] = false;
+			// // TODO: 
+			// if (result->score > alpha) {
+			// 	alpha = result->score;
+			// 	best_move = result->move;
+			// }
+   //  	}
     	result->score = alpha;
     	result->move = best_move;
     	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
     	printf(" --- SLAVE %d: sent a result to %d\n", myid, master);
     	// send_return(master, tuple(alpha, best_move));
     	idle = true;
+    	MPI_Send(&myid, 1, MPI_INT, MASTER_ID, SET_INACTIVE_TAG, MPI_COMM_WORLD);
+    	printf(" --- SLAVE %d: send inactive status to %d\n", myid, MASTER_ID);
     	// send_random_request();
 
     }
@@ -710,7 +929,7 @@ void play(char player, int depth)
 		slave();
 	}
 
-	MPI_Barrier(MPI_COMM_WORLD);
+	// MPI_Barrier(MPI_COMM_WORLD);
 
 	if (myid == MASTER_ID) {
 	    printf("move: %s\n", index2label(best_move));
@@ -727,15 +946,15 @@ int main(int argc, char *argv[])
 	long long before, after;
 	srand(time(0));
 #ifdef MPI_ENABLED
-	int nprocs;
-	before = wall_clock_time();
+
+
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
     slaves = nprocs - 1;
-
-    play(BLACK, 10);
+	before = wall_clock_time();
+    play(WHITE, 10);
     after = wall_clock_time();
     if (myid == MASTER_ID) {
     	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
