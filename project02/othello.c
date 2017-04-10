@@ -594,13 +594,17 @@ void slave()
     	parent_move = job->move;
     	move_list = generate_moves(player, board, &n_moves);
     	printf(" --- SLAVE %d: %d moves\n", myid, n_moves);
-		printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
-	    Tuple *ret = alphabeta(opponent(player),
-	            make_move(move_list[0], player, copy_board(board)),
-	            depth-1,
-	            -beta,
-	            -alpha);
-	    alpha = -(ret->score);
+
+		if (n_moves > 0) {
+			printf(" --- SLAVE %d: one iteration of alphabeta\n", myid);
+		    Tuple *ret = alphabeta(opponent(player),
+		            make_move(move_list[0], player, copy_board(board)),
+		            depth-1,
+		            -beta,
+		            -alpha);
+		    alpha = -(ret->score);
+		}
+
 
 	    // if (alpha >= beta) {
 	    // 	printf(" --- SLAVE %d: CUTOFF\n", myid);
@@ -639,9 +643,10 @@ void slave()
 				if (status.MPI_TAG == RETURN_TAG) {
 
 					MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
-					printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
+					int child = status.MPI_SOURCE;
+					printf(" --- SLAVE %d: received a result from %d\n", myid, child);
 					// slave_list[status.MPI_SOURCE] = false;
-					// active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
+					// active_list[(child % (myid * MAX_CHILDREN)) - 1] = false;
 
 					if (-(result->score) >= alpha) {
 						alpha = -(result->score);
@@ -651,11 +656,11 @@ void slave()
 			        job->depth = depth-1;
 			        job->alpha = -beta;
 			        job->beta = -alpha;
-
-			        // printf(" --- SLAVE %d: sending subproblem to child %d\n", myid, child);
-			        MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD);
-			        active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = true;
-			        printf(" --- SLAVE %d: sent subproblem to child %i\n", myid, status.MPI_SOURCE);
+// 
+			        printf(" --- SLAVE %d: sending subproblem(2) to child %d\n", myid, child);
+			        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+			        // active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = true;
+			        printf(" --- SLAVE %d: sent subproblem(2) to child %d\n", myid, child);
 					continue;
 				}
 				if (status.MPI_TAG == CUTOFF_TAG) {
@@ -995,7 +1000,7 @@ int main(int argc, char *argv[])
 
     slaves = nprocs;
 	before = wall_clock_time();
-    play(WHITE, 10);
+    play(WHITE, 12);
     after = wall_clock_time();
     if (myid == MASTER_ID) {
     	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
