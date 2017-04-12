@@ -2,7 +2,8 @@ typedef int bool;
 #define true 1
 #define false 0
 
-typedef struct _Tuple Tuple;
+// typedef struct _Tuple Tuple;
+typedef struct _Tuple Result;
 typedef struct _Job Job;
 
 int find_bracket(int square, char player, char *board, int direction);
@@ -21,6 +22,6 @@ void make_flips(int move, char player, char *board, int direction);
 char* make_move(int move, char player, char *board);
 int alphabeta_strategy(char player, char *board, int depth);
 int final_value(char player, char *board);
-Tuple* tuple(int score, int move);
-Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta);
+Result* result(int score, int move);
+Result* alphabeta(char player, char *board, int depth, int alpha, int beta);
 void play(char color, int depth);
