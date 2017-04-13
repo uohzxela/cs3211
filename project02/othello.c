@@ -54,6 +54,10 @@ int myid, slaves, nprocs;
 #define CUTOFF_ACK_TAG 11
 
 #define MAX_CHILDREN 4
+#define MAX_BOARDS_PER_SLAVE max_boards/slaves
+
+long max_boards = 10000000;
+long boards_evaluated = 0;
 
 long long comm_time = 0;
 long long comp_time = 0;
@@ -172,6 +176,7 @@ int evaluate(char player, char *board)
             theirs += 1;
         }
     }
+   	boards_evaluated++;
     // printf("mine-theirs: %d\n", mine-theirs);
     return mine - theirs;
 }
@@ -574,7 +579,7 @@ void slave()
     			MPI_Recv(&from, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
     			after = wall_clock_time();
     			comm_time += after - before;
-    			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
+    			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated);
     			MPI_Send(&myid, 1, MPI_INT, status.MPI_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD);
     			return;
 			} else if (status.MPI_TAG == CUTOFF_TAG) {
@@ -591,12 +596,21 @@ void slave()
     	after = wall_clock_time();
     	comm_time += after - before;
 
+
     	player = job->player;
     	board = job->board;
     	alpha = job->alpha;
     	beta = job->beta;
     	depth = job->depth;
     	parent_move = job->move;
+
+
+    	if (depth <= 0 || boards_evaluated >= MAX_BOARDS_PER_SLAVE) {
+	    	result->score = evaluate(player, board);
+	    	result->move = parent_move;
+	    	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
+	    	continue;
+    	}
     	
     	before = wall_clock_time();
     	move_list = generate_moves(player, board, &n_moves);
@@ -610,9 +624,22 @@ void slave()
 		            -beta,
 		            -alpha);
 		    alpha = -(ret->score);
+		 	after = wall_clock_time();
+			comp_time += after - before;
+		} else {
+	    	result->score = evaluate(player, board);
+	    	result->move = parent_move;
+	    	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
+	    	continue;
 		}
-		after = wall_clock_time();
-		comp_time += after - before;
+
+		if (alpha >= beta) {
+	    	result->score = alpha;
+	    	result->move = parent_move;
+	    	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
+	    	continue;
+		}
+
 
 	    // if (alpha >= beta) {
 	    // 	printf(" --- SLAVE %d: CUTOFF\n", myid);
@@ -697,7 +724,7 @@ void slave()
 	    			// }
 	    			after = wall_clock_time();
 	    			comm_time += after - before;
-	    			fprintf(stderr, " --- (premature) SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0);
+	    			fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated);
 	    			MPI_Send(&myid, 1, MPI_INT, master, TERMINATION_TAG, MPI_COMM_WORLD);
 	    			return;
 				}
@@ -793,7 +820,7 @@ int main(int argc, char *argv[])
 
     slaves = nprocs;
 	before = wall_clock_time();
-    play(BLACK, 10);
+    play(BLACK, 12);
     after = wall_clock_time();
     if (myid == MASTER_ID) {
     	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
