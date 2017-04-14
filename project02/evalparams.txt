@@ -1,0 +1,2 @@
+MaxDepth: 13
+MaxBoards: 10000000
