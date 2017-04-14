@@ -13,15 +13,34 @@ MPI_Status status;
 
 #define min(a,b) (a < b ? a : b)
 
-// playable number of rows and columns as specified in initialbrd.txt
-int rows, cols;
+
+/** 
+ * Initial parameters.
+ **/
+
+int rows, cols; // playable number of rows and columns
 #define ROWS rows
 #define COLS cols
 
-// WIDTH is the total number of columns
-// HEIGHT is the total number of rows
-// the extra two rows and columns form the border of the game board
-// the border will contain the OUTER symbol which signifies a non-playable move
+char *INITIAL_WHITE_POS[256], *INITIAL_BLACK_POS[256]; // initial white/black positions
+int n_initial_whites, n_initial_blacks;
+
+int TIMEOUT; // defined but not used
+
+
+/** 
+ * Evaluation parameters.
+ **/
+int MAX_DEPTH;
+long MAX_BOARDS;
+long boards_evaluated = 0;
+
+
+/**
+ * The extra two rows and columns form the border of the game board.
+ * The border will enclose the board inside a larger array,
+ * so that illegal squares are "off" the edge and are easily detectable.
+ **/
 #define HEIGHT (ROWS+2)
 #define WIDTH (COLS+2)
 #define SQUARES WIDTH*HEIGHT
@@ -38,11 +57,6 @@ int *DIRECTIONS;
 #define DOWN_LEFT (WIDTH-1)
 #define UP_LEFT -(WIDTH+1)
 
-// initial white and black positions as defined in initialbrd.txt
-char *INITIAL_WHITE_POS[256];
-char *INITIAL_BLACK_POS[256];
-int n_initial_whites;
-int n_initial_blacks;
 
 // symbols to represent a state of a game board square
 char EMPTY = '.';
@@ -51,12 +65,7 @@ char WHITE = 'o';
 char OUTER = '?';
 char PLAYER;
 
-int TIMEOUT; // defined in initialbrd.txt
-int MAX_DEPTH; // defined in evalparams.txt
-long MAX_BOARDS; // defined in evalparams.txt
-long boards_evaluated = 0;
-
-int myid, slaves, nprocs;
+int myid, slaves = 1, nprocs;
 
 #define MASTER_ID 0
 
@@ -76,10 +85,10 @@ int myid, slaves, nprocs;
 #define MAX_CHILDREN 4
 #define MAX_BOARDS_PER_SLAVE MAX_BOARDS/slaves
 
-long long comm_time = 0;
-long long comp_time = 0;
+// for time statistics
+long long comm_time = 0, comp_time = 0, before, after;
 
-// rename to Result
+
 struct _Tuple {
     int move;
     int score;
@@ -780,8 +789,7 @@ void slave()
 			MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
 			// printf(" --- SLAVE %d: received a result from %d\n", myid, status.MPI_SOURCE);
 			active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = false;
-			// TODO: 
-			if (-result->score >= alpha) {
+			if (-result->score > alpha) {
 				alpha = -result->score;
 			}
     	}
@@ -790,12 +798,6 @@ void slave()
     	MPI_Send(result, sizeof(Tuple), MPI_BYTE, master, RETURN_TAG, MPI_COMM_WORLD);
     	printf(" --- SLAVE %d: sent a result to %d\n", myid, master);
     	comm_time += wall_clock_time() - before;
-    	// send_return(master, tuple(alpha, best_move));
-    	// idle = true;
-    	// MPI_Send(&myid, 1, MPI_INT, MASTER_ID, SET_INACTIVE_TAG, MPI_COMM_WORLD);
-    	// printf(" --- SLAVE %d: send inactive status to %d\n", myid, MASTER_ID);
-    	// send_random_request();
-    	// idle = true;
     }	
 }
 
