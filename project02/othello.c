@@ -3,6 +3,7 @@
 #include <string.h>
 #include <limits.h>
 #include <time.h>
+#include <ctype.h>
 #include "othello.h"
 
 #ifdef MPI_ENABLED
@@ -12,35 +13,54 @@ MPI_Status status;
 
 #define min(a,b) (a < b ? a : b)
 
-#define WIDTH 10
-#define HEIGHT 10
+// playable number of rows and columns as specified in initialbrd.txt
+int rows, cols;
+#define ROWS rows
+#define COLS cols
 
-#define ROWS HEIGHT-2
-#define COLS WIDTH-2
+// WIDTH is the total number of columns
+// HEIGHT is the total number of rows
+// the extra two rows and columns form the border of the game board
+// the border will contain the OUTER symbol which signifies a non-playable move
+#define HEIGHT (ROWS+2)
+#define WIDTH (COLS+2)
 #define SQUARES WIDTH*HEIGHT
 
+// constant variables related to the 8 directions a move can take
+int *DIRECTIONS;
+#define N_DIRECTIONS 8
 #define UP -WIDTH
 #define DOWN WIDTH
 #define LEFT -1
 #define RIGHT 1
 #define UP_RIGHT -(WIDTH-1)
-#define DOWN_RIGHT WIDTH+1
-#define DOWN_LEFT WIDTH-1
+#define DOWN_RIGHT (WIDTH+1)
+#define DOWN_LEFT (WIDTH-1)
 #define UP_LEFT -(WIDTH+1)
 
-int DIRECTIONS[] = {UP, UP_RIGHT, RIGHT, DOWN_RIGHT, DOWN, DOWN_LEFT, LEFT, UP_LEFT};
+// initial white and black positions as defined in initialbrd.txt
+char *INITIAL_WHITE_POS[256];
+char *INITIAL_BLACK_POS[256];
+int n_initial_whites;
+int n_initial_blacks;
 
-char *INITIAL_WHITE_POS[] = {"b3", "b5", "b6", "c4", "c5", "d4", "d5", "d6","d7","e2","e3","e4","e6","f3","g3","g4","g6","h4","h5"};;
-char *INITIAL_BLACK_POS[] = {"a4", "a5", "a6", "b4", "c1","c3", "d1", "d2", "d3","e5", "e7", "e8","f2","f4","f5","g5","h3","h6"};
-
+// symbols to represent a state of a game board square
 char EMPTY = '.';
 char BLACK = '@';
 char WHITE = 'o';
 char OUTER = '?';
+char PLAYER;
+
+int TIMEOUT; // defined in initialbrd.txt
+int MAX_DEPTH; // defined in evalparams.txt
+long MAX_BOARDS; // defined in evalparams.txt
+long boards_evaluated = 0;
 
 int myid, slaves, nprocs;
+
 #define MASTER_ID 0
 
+// tag constants to be used for MPI communication
 #define SUBPROBLEM_TAG 1
 #define RETURN_TAG 2
 #define REQUEST_TAG 3
@@ -54,10 +74,7 @@ int myid, slaves, nprocs;
 #define CUTOFF_ACK_TAG 11
 
 #define MAX_CHILDREN 4
-#define MAX_BOARDS_PER_SLAVE max_boards/slaves
-
-long max_boards = 10000000;
-long boards_evaluated = 0;
+#define MAX_BOARDS_PER_SLAVE MAX_BOARDS/slaves
 
 long long comm_time = 0;
 long long comp_time = 0;
@@ -69,12 +86,12 @@ struct _Tuple {
 };
 
 struct _Job {
-    char board[SQUARES];
     int alpha;
     int beta;
     char player;
     int depth;
     int move;
+    char board[];
 };
 
 /** 
@@ -113,6 +130,7 @@ int label2index(const char *label)
 char* create_board()
 {
     char *board = malloc(sizeof(char)*(SQUARES));
+
     size_t i;
     for (i=0; i<SQUARES; i++) {
         if (i >= WIDTH+1 &&
@@ -124,10 +142,10 @@ char* create_board()
             board[i] = OUTER;
         }
     }
-    for (i=0; i<sizeof(INITIAL_WHITE_POS)/sizeof(INITIAL_WHITE_POS[0]); i++) {
+    for (i=0; i<n_initial_whites; i++) {
         board[label2index(INITIAL_WHITE_POS[i])] = WHITE;
     }
-    for (i=0; i<sizeof(INITIAL_BLACK_POS)/sizeof(INITIAL_BLACK_POS[0]); i++) {
+    for (i=0; i<n_initial_blacks; i++) {
         board[label2index(INITIAL_BLACK_POS[i])] = BLACK;
     }
     return board;
@@ -184,10 +202,9 @@ int evaluate(char player, char *board)
 bool is_legal(int move, char player, char *board)
 {
     if (!is_valid(move) || board[move] != EMPTY) return false;
-    bool has_bracket = false;
-    size_t i;
+    int i;
     // printf("sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0] = %d\n", sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0]));
-    for (i=0; i<sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0]); i++) {
+    for (i=0; i<N_DIRECTIONS; i++) {
         int d = DIRECTIONS[i];
         if (find_bracket(move, player, board, d) > -1) {
             return true;
@@ -248,7 +265,7 @@ char* make_move(int move, char player, char *board)
     size_t i;
     //printf("sizeof(DIRECTIONS) = %d\n", sizeof(DIRECTIONS));
     //printf("sizeof(DIRECTIONS[0]) = %d\n", sizeof(DIRECTIONS[0]));
-    for (i=0; i<sizeof(DIRECTIONS)/sizeof(DIRECTIONS[0]); i++) {
+    for (i=0; i<N_DIRECTIONS; i++) {
         int d = DIRECTIONS[i];
         make_flips(move, player, board, d);
     }
@@ -307,7 +324,7 @@ int alphabeta_strategy(char player, char *board, int depth)
 
 Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
 {
-    if (depth == 0) {
+    if (depth == 0 || boards_evaluated >= MAX_BOARDS_PER_SLAVE) {
         // TODO: change score() to evaluate()
         return tuple(evaluate(player, board), -1);
     }
@@ -471,7 +488,7 @@ int master(char player, char *board, int depth)
     // alpha = -(result->score);
 
 
-    Job *job = malloc(sizeof(Job));
+    Job *job = malloc(sizeof(Job)+SQUARES);
 	Tuple *result = malloc(sizeof(Tuple));
 
     for (i=0; i<min(n_moves, n_children); i++) {
@@ -484,7 +501,7 @@ int master(char player, char *board, int depth)
         job->beta = -alpha;
         job->move = move_list[i];
         
-        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+        MPI_Send(job, sizeof(Job)+SQUARES, MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
         printf(" --- MASTER: sent subproblem to %i\n", child);
         // slave_list[slave] = true;
         // MPI_Recv(&idle, 1, MPI_INT, slave, STATUS_TAG, MPI_COMM_WORLD, &status);
@@ -510,7 +527,7 @@ int master(char player, char *board, int depth)
         job->beta = -alpha;
         job->move = move_list[i];
         
-        MPI_Send(job, sizeof(Job), MPI_BYTE, status.MPI_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+        MPI_Send(job, sizeof(Job)+SQUARES, MPI_BYTE, status.MPI_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD);
         printf(" --- MASTER: sent subproblem(2) to %i\n", status.MPI_SOURCE);
         // MPI_Recv(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD, &status);
         // current_move[status.MPI_SOURCE] = moves[i];
@@ -558,7 +575,7 @@ void slave()
 	int *active_list = malloc(sizeof(int) * n_children);
 	for (i=0;i<n_children;i++) active_list[i] = false;
 	int master = (myid-1) / MAX_CHILDREN;
-	Job *job = malloc(sizeof(Job));
+	Job *job = malloc(sizeof(Job)+SQUARES);
 	Tuple *result = malloc(sizeof(Tuple));
 	// int dirty = false;
 	// TODO: enforce evaluation limit
@@ -569,7 +586,7 @@ void slave()
 		while (true) {
 			MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 			if (status.MPI_TAG == SUBPROBLEM_TAG) {
-				MPI_Recv(job, sizeof(Job), MPI_BYTE, master, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
+				MPI_Recv(job, sizeof(Job)+SQUARES, MPI_BYTE, master, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
 				printf(" --- SLAVE %d: received a subproblem from %d\n", myid, status.MPI_SOURCE);
 				// MPI_Send(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD);
 				// master = status.MPI_SOURCE;
@@ -588,7 +605,7 @@ void slave()
     			MPI_Send(&myid, 1, MPI_INT, status.MPI_SOURCE, CUTOFF_ACK_TAG, MPI_COMM_WORLD);
 			}
 			else {
-				MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+				MPI_Recv(job, sizeof(Job)+SQUARES, MPI_BYTE, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 				printf(" --- SLAVE %d: received an unknown message (%d) from %d\n", myid, status.MPI_TAG, status.MPI_SOURCE);
 			}
 		}
@@ -658,7 +675,7 @@ void slave()
 	        job->beta = -alpha;
 
 	        // printf(" --- SLAVE %d: sending subproblem to child %d\n", myid, child);
-	        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+	        MPI_Send(job, sizeof(Job)+SQUARES, MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
 	        active_list[(child % (myid * MAX_CHILDREN)) - 1] = true;
 	        printf(" --- SLAVE %d: sent subproblem to child %i\n", myid, child);
 	    }
@@ -695,7 +712,7 @@ void slave()
 			        job->beta = -alpha;
 // 
 			        printf(" --- SLAVE %d: sending subproblem(2) to child %d\n", myid, child);
-			        MPI_Send(job, sizeof(Job), MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
+			        MPI_Send(job, sizeof(Job)+SQUARES, MPI_BYTE, child, SUBPROBLEM_TAG, MPI_COMM_WORLD);
 			        // active_list[(status.MPI_SOURCE % (myid * MAX_CHILDREN)) - 1] = true;
 			        printf(" --- SLAVE %d: sent subproblem(2) to child %d\n", myid, child);
 					continue;
@@ -729,7 +746,7 @@ void slave()
 	    			return;
 				}
 				if (status.MPI_TAG == SUBPROBLEM_TAG) {
-					MPI_Recv(job, sizeof(Job), MPI_BYTE, MPI_ANY_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
+					MPI_Recv(job, sizeof(Job)+SQUARES, MPI_BYTE, MPI_ANY_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
 					// MPI_Send(&idle, 1, MPI_INT, status.MPI_SOURCE, STATUS_TAG, MPI_COMM_WORLD);
 				}
     		}
@@ -807,12 +824,135 @@ void play(char player, int depth)
 }
 #endif
 
+void parse_size(char *line)
+{
+	char *token;
+
+	token = strsep(&line, ",");
+	rows = atoi(token);
+
+	token = strsep(&line, ",");
+	cols = atoi(token);
+}
+void parse_white_positions(char *line)
+{
+	char *token, *positions;
+
+	token = strsep(&line, " "); // token is now "{"
+	token = strsep(&line, " "); // token is now "d5,e4" etc.
+
+	positions = strdup(token);
+	n_initial_whites = 0;
+	while ((token = strsep(&positions, ","))) {
+		INITIAL_WHITE_POS[n_initial_whites++] = token;
+	}
+	free(positions);
+}
+void parse_black_positions(char *line)
+{
+	char *token, *positions;
+
+	token = strsep(&line, " "); // token is now "{"
+	token = strsep(&line, " "); // token is now "d5,e4" etc.
+
+	positions = strdup(token);
+	n_initial_blacks = 0;
+	while ((token = strsep(&positions, ","))) {
+		INITIAL_BLACK_POS[n_initial_blacks++] = token;
+	}
+	free(positions);
+}
+void parse_color(char *line)
+{
+	char *p = line;
+	// convert to lowercase
+	for ( ; *p; ++p) *p = tolower(*p);
+	if (strcmp(line, "black\n") == 0) {
+		PLAYER = BLACK;
+	} else {
+		PLAYER = WHITE;
+	}
+}
+void parse_timeout(char *line)
+{
+	TIMEOUT = atoi(line);
+}
+void parse_initialbrd(int argc, char* argv[])
+{
+    FILE *file; 
+    char line[256];
+    char *token, *line_dup;
+    if (argc > 1) {
+    	file = fopen(argv[1], "r");
+    	while (fgets(line, sizeof(line), file)) {
+
+			line_dup = strdup(line);
+			token = strsep(&line_dup, " ");
+			if (strcmp(token, "Size:") == 0) {
+				parse_size(line_dup);
+			} else if (strcmp(token, "White:") == 0) {
+				parse_white_positions(line_dup);
+			} else if (strcmp(token, "Black:") == 0) {
+				parse_black_positions(line_dup);
+			} else if (strcmp(token, "Color:") == 0) {
+				parse_color(line_dup);
+			} else if (strcmp(token, "Timeout:") == 0) {
+				parse_timeout(line_dup);
+			}
+    	}
+    	fclose(file);
+    }
+}
+void parse_max_depth(char *line)
+{
+	MAX_DEPTH = atoi(line);
+}
+void parse_max_boards(char *line)
+{
+	MAX_BOARDS = atoi(line);
+}
+void parse_evalparams(int argc, char* argv[])
+{
+    FILE *file; 
+    char line[256];
+    char *token, *line_dup;
+    if (argc > 2) {
+    	file = fopen(argv[2], "r");
+    	while (fgets(line, sizeof(line), file)) {
+
+			line_dup = strdup(line);
+			token = strsep(&line_dup, " ");
+			if (strcmp(token, "MaxDepth:") == 0) {
+				parse_max_depth(line_dup);
+			} else if (strcmp(token, "MaxBoards:") == 0) {
+				parse_max_boards(line_dup);
+			}
+    	}
+    	fclose(file);
+    }
+}
+
+void initialize_directions()
+{
+	DIRECTIONS = malloc(sizeof(int)*9);
+	int i=0;
+	DIRECTIONS[i++] = UP;
+	DIRECTIONS[i++] = DOWN;
+	DIRECTIONS[i++] = LEFT;
+	DIRECTIONS[i++] = RIGHT;
+	DIRECTIONS[i++] = UP_RIGHT;
+	DIRECTIONS[i++] = DOWN_RIGHT;
+	DIRECTIONS[i++] = DOWN_LEFT;
+	DIRECTIONS[i++] = UP_LEFT;
+}
 int main(int argc, char *argv[])
 {
 	long long before, after;
 	srand(time(0));
+    parse_initialbrd(argc, argv);
+    parse_evalparams(argc, argv);
+	initialize_directions();
 #ifdef MPI_ENABLED
-
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
@@ -820,7 +960,7 @@ int main(int argc, char *argv[])
 
     slaves = nprocs;
 	before = wall_clock_time();
-    play(BLACK, 12);
+    play(PLAYER, MAX_DEPTH);
     after = wall_clock_time();
     if (myid == MASTER_ID) {
     	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
@@ -829,7 +969,8 @@ int main(int argc, char *argv[])
 
 #else
     before = wall_clock_time();
-    play_serial(WHITE, 10);
+    play_serial(PLAYER, MAX_DEPTH);
+
     after = wall_clock_time();
     fprintf(stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
 #endif
