@@ -5,7 +5,7 @@
 // #include <time.h>
 #include <sys/time.h>
 #include <ctype.h>
-#include "othello.h"
+#include "othellox.h"
 
 #ifdef MPI_ENABLED
 #include "mpi.h"
@@ -14,7 +14,7 @@ MPI_Status status;
 
 #define min(a,b) (a < b ? a : b)
 
-#if 1
+#if 0
   #define DEBUG(a) printf a
 #else
   #define DEBUG(a) (void)0
@@ -533,7 +533,10 @@ int master(char player, char *board, int depth)
     int *active_list = create_active_list(n_children);
 
     int alpha = -9999, beta = 9999;
-    int best_move = move_list[0], has_message;
+    int best_move = -1, has_message;
+
+    n_moves = 0;
+    printf("n_moves: %d\n", n_moves);
 
     Job *job = malloc(sizeof(Job)+SQUARES);
 	Tuple *result = malloc(sizeof(Tuple));
@@ -831,7 +834,7 @@ void slave() {
 
 void play(char player, int depth)
 {
-	int best_move;
+	int best_move = -1;
 	char *board = create_board();
 
 	if (myid == MASTER_ID) {
@@ -985,7 +988,6 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-
     slaves = nprocs;
 	before = wall_clock_time();
     play(PLAYER, MAX_DEPTH);
@@ -1001,7 +1003,7 @@ int main(int argc, char *argv[])
     play_serial(PLAYER, MAX_DEPTH);
 
     after = wall_clock_time();
-    DEBUG((stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
+    DEBUG((" --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
 #endif
     return 0;
 }
