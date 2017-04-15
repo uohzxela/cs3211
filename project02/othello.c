@@ -14,7 +14,7 @@ MPI_Status status;
 
 #define min(a,b) (a < b ? a : b)
 
-#if 1
+#if 0
   #define DEBUG(a) printf a
 #else
   #define DEBUG(a) (void)0
@@ -985,7 +985,6 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
-
     slaves = nprocs;
 	before = wall_clock_time();
     play(PLAYER, MAX_DEPTH);
@@ -1001,7 +1000,7 @@ int main(int argc, char *argv[])
     play_serial(PLAYER, MAX_DEPTH);
 
     after = wall_clock_time();
-    DEBUG((stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
+    DEBUG((" --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
 #endif
     return 0;
 }
