@@ -14,7 +14,7 @@ MPI_Status status;
 
 #define min(a,b) (a < b ? a : b)
 
-#if 0
+#if 1
   #define DEBUG(a) printf a
 #else
   #define DEBUG(a) (void)0
@@ -496,6 +496,7 @@ void send_termination_ack(int to)
 void print_slave_stats()
 {
 	DEBUG((" --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated));
+	printf("%d, %6.2f, %6.2f, %ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated);
 }
 void receive_cutoff(int *from)
 {
@@ -534,9 +535,6 @@ int master(char player, char *board, int depth)
 
     int alpha = -9999, beta = 9999;
     int best_move = -1, has_message;
-
-    n_moves = 0;
-    printf("n_moves: %d\n", n_moves);
 
     Job *job = malloc(sizeof(Job)+SQUARES);
 	Tuple *result = malloc(sizeof(Tuple));
@@ -995,6 +993,7 @@ int main(int argc, char *argv[])
 
     if (myid == MASTER_ID) {
     	DEBUG((" --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
+    	printf("Time: %6.2f\n", (after - before) / 1000000000.0);
     }
 	MPI_Finalize();
 
@@ -1004,6 +1003,7 @@ int main(int argc, char *argv[])
 
     after = wall_clock_time();
     DEBUG((" --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
+    printf("Time: %6.2f\n", (after - before) / 1000000000.0);
 #endif
     return 0;
 }

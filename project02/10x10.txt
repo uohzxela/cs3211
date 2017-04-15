@@ -1,0 +1,5 @@
+Size: 10,10
+White: { c4,c6,c7,d5,d6,e5,e6,e7,e8,f3,f4,f5,f7,g4,h4,h5,h7,i5,i6 }
+Black: { b5,b6,b7,c5,d2,d4,e2,e3,e4,f6,f8,f9,g3,g5,g6,h6,i4,i7 }
+Color: Black
+Timeout: 10
