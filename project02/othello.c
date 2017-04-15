@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <time.h>
+// #include <time.h>
+#include <sys/time.h>
 #include <ctype.h>
 #include "othello.h"
 
@@ -30,7 +31,7 @@ int rows, cols; // playable number of rows and columns
 char *INITIAL_WHITE_POS[256], *INITIAL_BLACK_POS[256]; // initial white/black positions
 int n_initial_whites, n_initial_blacks;
 
-int TIMEOUT; // defined but not used
+int TIMEOUT;
 
 
 /** 
@@ -90,7 +91,7 @@ int myid, slaves = 1, nprocs;
 
 // for time statistics
 long long comm_time = 0, comp_time = 0, before, after;
-
+double AGGREGATION_TIMEOUT = 3.0;
 
 struct _Tuple {
     int move;
@@ -125,6 +126,7 @@ long long wall_clock_time()
 
 char* index2label(int index)
 {
+    if (index < 0) return "na";
     int row = index/WIDTH;
     char col = 'a' + (index%WIDTH) - 1;
     char *label = malloc(sizeof(char) * 4);
@@ -367,16 +369,20 @@ Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
     }
     return tuple(alpha, best_move);
 }
+void print_best_move(int best_move)
+{
+	printf("Best moves: { %s }\n", index2label(best_move));
+}
 
 void play_serial(char player, int depth)
 {
     char *board = create_board();
-    DEBUG(("Before score: %d", evaluate(player, board)));
+    DEBUG(("Before score: %d\n", evaluate(player, board)));
     print_board(board);
     int move = get_move(player, board, depth);
-
+    print_best_move(move);
     make_move(move, player, board);
-    DEBUG(("After score: %d", evaluate(player, board)));
+    DEBUG(("After score: %d\n", evaluate(player, board)));
     print_board(board);
 }
 
@@ -397,7 +403,7 @@ void send_cutoff_to_children(int *children_list, int n_children)
 	int i;
 	for (i=0; i<n_children; i++) {
 		send_cutoff(children_list[i]);
-		receive_cutoff_ack(children_list[i]);
+		// receive_cutoff_ack(children_list[i]);
 	}
 }
 
@@ -453,6 +459,7 @@ void send_subproblem(Job *job, int to)
 }
 void receive_result(Tuple *result, int *from)
 {
+	DEBUG((" --- %s %d: waiting for results\n", PROC_NAME, myid));
 	MPI_Recv(result, sizeof(Tuple), MPI_BYTE, MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &status);
 	*from = status.MPI_SOURCE;
 	DEBUG((" --- %s %d: received result from %d\n", PROC_NAME, myid, *from));
@@ -466,54 +473,6 @@ void receive_termination_ack(int from)
 {
 	int tmp;
 	MPI_Recv(&tmp, 1, MPI_INT, from, TERMINATION_ACK_TAG, MPI_COMM_WORLD, &status);
-}
-int master(char player, char *board, int depth)
-{
-    int n_moves, i, n_children, child;
-    int *move_list = generate_moves(player, board, &n_moves);
-    print_move_list(move_list, n_moves);
-    int *children_list = create_children_list(&n_children);
-
-    int alpha = -9999, beta = 9999;
-    int best_move = move_list[0];
-
-    Job *job = malloc(sizeof(Job)+SQUARES);
-	Tuple *result = malloc(sizeof(Tuple));
-
-    for (i=0; i<min(n_moves, n_children); i++) {
-    	int child = children_list[i];
-        update_job(job, move_list[i], player, board, depth, alpha, beta);
-        send_subproblem(job, child);
-    }
-    // if num of children < num of moves
-    for (i=n_children; i<n_moves; i++) {
-        receive_result(result, &child);
-        if (-result->score > alpha) {
-            best_move = result->move;
-            alpha = -result->score;
-        }
-		if (alpha >= beta) {
-			send_cutoff_to_children(children_list, n_children);
-			break;
-		}
-        update_job(job, move_list[i], player, board, depth, alpha, beta);
-        send_subproblem(job, child);
-    }
-    for(i = 0; i < min(n_moves, n_children); i++) {
-    	receive_result(result, &child);
-        if(-result->score > alpha) {
-            alpha = -result->score;
-            best_move = result->move;
-        }
-    }
-   	DEBUG((" --- MASTER: received final result\n"));
-
-   	for (i=1; i<nprocs; i++) {
-   		send_termination(i);
-   		receive_termination_ack(i);
-   	}
-
-    return best_move;
 }
 void probe(MPI_Status *status)
 {
@@ -536,7 +495,7 @@ void send_termination_ack(int to)
 }
 void print_slave_stats()
 {
-	fprintf(stderr, " --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated);
+	DEBUG((" --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated));
 }
 void receive_cutoff(int *from)
 {
@@ -555,7 +514,8 @@ void send_result_to_parent(int score, int move)
 	MPI_Send(&result, sizeof(Tuple), MPI_BYTE, PARENT_ID, RETURN_TAG, MPI_COMM_WORLD);
 }
 int child_order(int child)
-{
+{	
+	if ((myid * MAX_CHILDREN) == 0) return child-1;
 	return (child % (myid * MAX_CHILDREN)) - 1;
 }
 int* create_active_list(int n_children)
@@ -564,6 +524,67 @@ int* create_active_list(int n_children)
 	for (i=0;i<n_children;i++) active_list[i] = false;
 	return active_list;
 }
+int master(char player, char *board, int depth)
+{
+    int n_moves, i, n_children, child;
+    int *move_list = generate_moves(player, board, &n_moves);
+    print_move_list(move_list, n_moves);
+    int *children_list = create_children_list(&n_children);
+    int *active_list = create_active_list(n_children);
+
+    int alpha = -9999, beta = 9999;
+    int best_move = move_list[0], has_message;
+
+    Job *job = malloc(sizeof(Job)+SQUARES);
+	Tuple *result = malloc(sizeof(Tuple));
+
+    for (i=0; i<min(n_moves, n_children); i++) {
+    	int child = children_list[i];
+        update_job(job, move_list[i], player, board, depth, alpha, beta);
+        send_subproblem(job, child);
+        active_list[child_order(child)] = true;
+    }
+    // if num of children < num of moves
+    for (i=n_children; i<n_moves; i++) {
+
+        receive_result(result, &child);
+
+        if (-result->score > alpha) {
+            best_move = result->move;
+            alpha = -result->score;
+        }
+		if (alpha >= beta) {
+			send_cutoff_to_children(children_list, n_children);
+			break;
+		}
+        update_job(job, move_list[i], player, board, depth, alpha, beta);
+        send_subproblem(job, child);
+
+    }
+	time_t start = time(NULL), end;
+	while (has_active_children(active_list, n_children) && difftime(end, start) < AGGREGATION_TIMEOUT) {
+		MPI_Iprobe(MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &has_message, &status);
+		if (has_message) {
+			receive_result(result, &child);
+			active_list[child_order(child)] = false;
+			if (-result->score > alpha) {
+				alpha = -result->score;
+			}
+		}
+		end = time(NULL);
+	}
+
+   	DEBUG((" --- MASTER: received final result\n"));
+
+   	for (i=1; i<nprocs; i++) {
+   		send_termination(i);
+   		send_termination(i);
+   		receive_termination_ack(i);
+   	}
+
+    return best_move;
+}
+
 void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *active_list)
 {
 	char player = job->player;
@@ -616,33 +637,32 @@ void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *ac
 			break;
 		}
 		before = wall_clock_time();
-
-		MPI_Iprobe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &has_message, &status);
-
+		MPI_Iprobe(MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &has_message, &status);
 		if (has_message) {
-			if (status.MPI_TAG == RETURN_TAG) {
-				receive_result(&result, &child);
-				if (-(result.score) > alpha) {
-					alpha = -(result.score);
-				}
-				update_job(job, move_list[i], player, board, depth, alpha, beta);
-				send_subproblem(job, child);
-				continue;
-			}
-			if (status.MPI_TAG == CUTOFF_TAG) {
-				receive_cutoff(&from);
-				send_cutoff_to_children(children_list, n_children);
-				send_cutoff_ack(from);
-				break;
-			}
-			if (status.MPI_TAG == TERMINATION_TAG) {
-				receive_termination(&from);
-    			send_termination_ack(from);
-    			comm_time += wall_clock_time() - before;
-    			print_slave_stats();
-    			return;
-			}
+			receive_termination(&from);
+			send_termination_ack(from);
+			comm_time += wall_clock_time() - before;
+			print_slave_stats();
+			return;
 		}
+		MPI_Iprobe(MPI_ANY_SOURCE, CUTOFF_TAG, MPI_COMM_WORLD, &has_message, &status);
+		if (has_message) {
+			receive_cutoff(&from);
+			send_cutoff_to_children(children_list, n_children);
+			send_cutoff_ack(from);
+			break;
+		}
+		MPI_Iprobe(MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &has_message, &status);
+		if (has_message) {
+			receive_result(&result, &child);
+			if (-(result.score) > alpha) {
+				alpha = -(result.score);
+			}
+			update_job(job, move_list[i], player, board, depth, alpha, beta);
+			send_subproblem(job, child);
+			continue;
+		}
+
 
 		comm_time += wall_clock_time() - before;
 		DEBUG((" --- SLAVE %d: one iteration of alphabeta\n", myid));
@@ -656,18 +676,31 @@ void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *ac
 	}
 
 	before = wall_clock_time();
-	while (has_active_children(active_list, n_children)) {
-		receive_result(&result, &child);
-		active_list[child_order(child)] = false;
-		if (-result.score > alpha) {
-			alpha = -result.score;
+	time_t start = time(NULL), end;
+	while (has_active_children(active_list, n_children) && difftime(end, start) < AGGREGATION_TIMEOUT) {
+		MPI_Iprobe(MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &has_message, &status);
+		if (has_message) {
+			receive_result(&result, &child);
+			active_list[child_order(child)] = false;
+			if (-result.score > alpha) {
+				alpha = -result.score;
+			}
 		}
+		MPI_Iprobe(MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &has_message, &status);
+		if (has_message) {
+			receive_termination(&from);
+			send_termination_ack(from);
+			comm_time += wall_clock_time() - before;
+			print_slave_stats();
+			return;
+		}
+		end = time(NULL);
 	}
 	send_result_to_parent(alpha, parent_move);
 	comm_time += wall_clock_time() - before;
 }
 void slave() {
-	int n_children, from;
+	int n_children, from, has_message;
 	int *children_list = create_children_list(&n_children);
 	int *active_list = create_active_list(n_children);
 
@@ -676,19 +709,23 @@ void slave() {
 	while (true) {
 		before = wall_clock_time();
 		while (true) {
-			probe(&status);
-			if (status.MPI_TAG == SUBPROBLEM_TAG) {
-				receive_subproblem(job, PARENT_ID);
-				break;
-			} else if (status.MPI_TAG == TERMINATION_TAG) {
+			MPI_Iprobe(MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &has_message, &status);
+			if (has_message) {
     			receive_termination(&from);
     			send_termination_ack(from);
     			comm_time += wall_clock_time() - before;
     			print_slave_stats();
     			return;
-			} else if (status.MPI_TAG == CUTOFF_TAG) {
+			}
+			MPI_Iprobe(MPI_ANY_SOURCE, CUTOFF_TAG, MPI_COMM_WORLD, &has_message, &status);
+			if (has_message) {
 				receive_cutoff(&from);
 				send_cutoff_ack(from);
+			}
+			MPI_Iprobe(MPI_ANY_SOURCE, SUBPROBLEM_TAG, MPI_COMM_WORLD, &has_message, &status);
+			if (has_message) {
+				receive_subproblem(job, PARENT_ID);
+				break;
 			}
 		}
     	comm_time += wall_clock_time() - before;
@@ -798,20 +835,17 @@ void play(char player, int depth)
 	char *board = create_board();
 
 	if (myid == MASTER_ID) {
-	    printf("Before score: %d", evaluate(player, board));
+	    DEBUG(("Before score: %d\n", evaluate(player, board)));
 	    print_board(board);
 		best_move = master(player, board, depth);
 	} else {
 		slave();
 	}
 
-	// MPI_Barrier(MPI_COMM_WORLD);
-
 	if (myid == MASTER_ID) {
-	    printf("move: %s\n", index2label(best_move));
+		print_best_move(best_move);
 	    make_move(best_move, player, board);
-
-	    printf("After score: %d", evaluate(player, board));
+	    DEBUG(("After score: %d\n", evaluate(player, board)));
 	    print_board(board);
 	}
 }
@@ -951,21 +985,23 @@ int main(int argc, char *argv[])
     MPI_Comm_rank(MPI_COMM_WORLD, &myid);
     MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
 
+
     slaves = nprocs;
 	before = wall_clock_time();
     play(PLAYER, MAX_DEPTH);
     after = wall_clock_time();
+
     if (myid == MASTER_ID) {
-    	fprintf(stderr, " --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
+    	DEBUG((" --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
     }
-    MPI_Finalize();
+	MPI_Finalize();
 
 #else
     before = wall_clock_time();
     play_serial(PLAYER, MAX_DEPTH);
 
     after = wall_clock_time();
-    fprintf(stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0);
+    DEBUG((stderr, " --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
 #endif
     return 0;
 }
