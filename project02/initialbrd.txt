@@ -1,5 +1,5 @@
 Size: 8,10
 White: { b3,b5,b6,c4,c5,d4,d5,d6,d7,e2,e3,e4,e6,f3,g3,g4,g6,h4,h5 }
 Black: { a4,a5,a6,b4,c1,c3,d1,d2,d3,e5,e7,e8,f2,f4,f5,g5,h3,h6 }
-Color: White
-Timeout: 10
+Color: Black
+Timeout: 120
