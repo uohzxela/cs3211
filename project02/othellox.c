@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-// #include <time.h>
+#include <time.h>
 #include <sys/time.h>
 #include <ctype.h>
 #include "othellox.h"
@@ -23,12 +23,11 @@ MPI_Status status;
 /**
  * Initial parameters.
  **/
-
-int rows, cols; // playable number of rows and columns
+int rows, cols; // These define the size of game board.
 #define ROWS rows
 #define COLS cols
 
-char *INITIAL_WHITE_POS[256], *INITIAL_BLACK_POS[256]; // initial white/black positions
+char *INITIAL_WHITE_POS[256], *INITIAL_BLACK_POS[256];
 int n_initial_whites, n_initial_blacks;
 
 int TIMEOUT;
@@ -51,7 +50,9 @@ long boards_evaluated = 0;
 #define WIDTH (COLS+2)
 #define SQUARES WIDTH*HEIGHT
 
-// constant variables related to the 8 directions a move can take
+/** 
+ * Constant variables related to the 8 directions a move can take.
+ **/
 int *DIRECTIONS;
 #define N_DIRECTIONS 8
 #define UP -WIDTH
@@ -64,7 +65,9 @@ int *DIRECTIONS;
 #define UP_LEFT -(WIDTH+1)
 
 
-// symbols to represent a state of a game board square
+/** 
+ * Symbols to represent a state of a game board square.
+ **/
 char EMPTY = '.';
 char BLACK = '@';
 char WHITE = 'o';
@@ -77,7 +80,9 @@ int myid, slaves = 1, nprocs = 2;
 #define PROC_NAME (myid == MASTER_ID ? "MASTER" : "SLAVE")
 #define PARENT_ID ((myid-1) / MAX_CHILDREN)
 
-// tag constants to be used for MPI communication
+/**
+ * Tag constants to be used for MPI communication.
+ **/
 #define SUBPROBLEM_TAG 1
 #define RETURN_TAG 2
 #define REQUEST_TAG 3
@@ -86,19 +91,28 @@ int myid, slaves = 1, nprocs = 2;
 #define TERMINATION_TAG 6
 #define TERMINATION_ACK_TAG 7
 
-#define MAX_CHILDREN 4
-#define MAX_BOARDS_PER_SLAVE (MAX_BOARDS/(nprocs-1))
+#define MAX_CHILDREN 3 // This define the n-ary of the worker tree.
+#define MAX_BOARDS_PER_SLAVE (MAX_BOARDS/(nprocs-1)) // This define the problem size allocated to each worker.
 
-// for time statistics
+/**
+ * Variables used for time statistics.
+ **/
 long long comm_time = 0, comp_time = 0, before, after;
 time_t global_start;
+
 double AGGREGATION_TIMEOUT = 3.0;
 
+/**
+ * A tuple holds the result from an alphabeta search.
+ */
 struct _Tuple {
     int move;
     int score;
 };
 
+/**
+ * A job is a computation unit to be sent to children in parallel.
+ */
 struct _Job {
     int alpha;
     int beta;
@@ -110,7 +124,6 @@ struct _Job {
 
 /**
  * Determines the current time
- *
  **/
 long long wall_clock_time()
 {
@@ -125,6 +138,9 @@ long long wall_clock_time()
 #endif
 }
 
+/**
+ * Converts the square index to a readable label string.
+ */
 char* index2label(int index)
 {
     if (index < 0) return "na";
@@ -135,6 +151,9 @@ char* index2label(int index)
     return label;
 }
 
+/**
+ * Converts the label string to a square index.
+ */
 int label2index(const char *label)
 {
     int col = label[0] - 'a' + 1;
@@ -197,6 +216,10 @@ char* copy_board(char *src)
     return copy;
 }
 
+/**
+ * A naive board evaluator which returns the difference between
+ * the number of black and white squares with respect to the current player.
+ */
 int evaluate(char player, char *board)
 {
     int mine = 0, theirs = 0;
@@ -213,6 +236,9 @@ int evaluate(char player, char *board)
     return mine - theirs;
 }
 
+/**
+ * Checks if a move is legal or not by searching for brackets in all directions.
+ */
 bool is_legal(int move, char player, char *board)
 {
     if (!is_valid(move) || board[move] != EMPTY) return false;
@@ -226,16 +252,26 @@ bool is_legal(int move, char player, char *board)
     return false;
 }
 
+/**
+ * Checks if the move index is a valid number.
+ */
 bool is_valid(int move)
 {
     return 0 <= move && move < SQUARES;
 }
 
+/**
+ * Returns the opponent given the player.
+ */
 char opponent(char player)
 {
     return player == WHITE ? BLACK : WHITE;
 }
 
+/**
+ * Initialize alphabeta search and return move.
+ * This is only used in sequential version.
+ */
 int get_move(char player, char *board, int depth)
 {
     char *copy = copy_board(board);
@@ -248,6 +284,9 @@ int get_move(char player, char *board, int depth)
     return move;
 }
 
+/**
+ * Find the bracket of a move given a direction.
+ */
 int find_bracket(int square, char player, char *board, int direction)
 {
     int bracket = square + direction;
@@ -260,6 +299,9 @@ int find_bracket(int square, char player, char *board, int direction)
     return (board[bracket] == OUTER || board[bracket] == EMPTY) ? -1 : bracket;
 }
 
+/**
+ * Flips the pieces given a move and direction of its bracket.
+ */
 void make_flips(int move, char player, char *board, int direction)
 {
     int bracket = find_bracket(move, player, board, direction);
@@ -272,6 +314,9 @@ void make_flips(int move, char player, char *board, int direction)
     }
 }
 
+/**
+ * Apply a move to the board and make flips.
+ */
 char* make_move(int move, char player, char *board)
 {
     board[move] = player;
@@ -284,6 +329,9 @@ char* make_move(int move, char player, char *board)
     return board;
 }
 
+/**
+ * Returns INT_MIN/INT_MAX depending on the evaluated score.
+ */
 int final_value(char player, char *board)
 {
     int diff = evaluate(player, board);
@@ -295,6 +343,9 @@ int final_value(char player, char *board)
     return diff;
 }
 
+/**
+ * Returns true if a move has a bracket.
+ */
 bool any_legal_move(char player, char *board)
 {
     int move;
@@ -306,6 +357,9 @@ bool any_legal_move(char player, char *board)
     return false;
 }
 
+/**
+ * Allocates memory for the Tuple struct, initializes its values and returns it.
+ */
 Tuple* tuple(int score, int move)
 {
     Tuple *ret = malloc(sizeof(Tuple));
@@ -314,6 +368,9 @@ Tuple* tuple(int score, int move)
     return ret;
 }
 
+/**
+ * Generate a set of legal moves.
+ */
 int* generate_moves(char player, char *board, int *n)
 {
     int *moves = malloc(sizeof(int) * SQUARES);
@@ -329,14 +386,25 @@ int* generate_moves(char player, char *board, int *n)
     return (*n) > 0 ? moves : NULL;
 }
 
+/**
+ * Driver function used by sequential function for alphabeta search.
+ */
 int alphabeta_strategy(char player, char *board, int depth)
 {
     return alphabeta(player, board, depth, -9999, 9999)->move;
 }
+
+/**
+ * Checks if the board evaluation/time limit is exceeded.
+ */
 bool is_limit_reached()
 {
 	return (boards_evaluated >= MAX_BOARDS_PER_SLAVE || difftime(time(NULL), global_start) > TIMEOUT);
 }
+
+/**
+ * Sequential alphabeta search.
+ */
 Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
 {
     if (depth == 0 || is_limit_reached()) {
@@ -373,11 +441,15 @@ Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
     }
     return tuple(alpha, best_move);
 }
+
 void print_best_move(int best_move)
 {
     printf("Best moves: { %s }\n", index2label(best_move));
 }
 
+/**
+ * Function used by sequential version to start the evaluation.
+ */
 void play_serial(char player, int depth)
 {
     char *board = create_board();
@@ -391,17 +463,28 @@ void play_serial(char player, int depth)
 }
 
 #ifdef MPI_ENABLED
+/**
+ * Send cutoff message to a recipient.
+ */
 void send_cutoff(int to)
 {
     MPI_Send(&myid, 1, MPI_INT, to, CUTOFF_TAG, MPI_COMM_WORLD);
     DEBUG((" --- SLAVE %d: cutting off child %d\n", myid, to));
 }
+
+/**
+ * Receive cutoff acknowledgement from a sender.
+ */
 void receive_cutoff_ack(int from)
 {
     int tmp;
     MPI_Recv(&tmp, 1, MPI_INT, from, CUTOFF_ACK_TAG, MPI_COMM_WORLD, &status);
     DEBUG((" --- SLAVE %d: successfully cut off child %d\n", myid, from));
 }
+
+/**
+ * Send cutoff to children.
+ */
 void send_cutoff_to_children(int *children_list, int n_children)
 {
     int i;
@@ -411,11 +494,18 @@ void send_cutoff_to_children(int *children_list, int n_children)
     }
 }
 
+/**
+ * Send result to recipient.
+ */
 void send_return(int to, Tuple *result)
 {
     MPI_Send(result, sizeof(Tuple), MPI_BYTE, to, RETURN_TAG, MPI_COMM_WORLD);
 }
 
+/**
+ * Creates a children list based on the current rank (myid).
+ * Children are at indices 2i+1 and 2i+2.
+ */
 int* create_children_list(int *n_children)
 {
     *n_children = 0;
@@ -428,6 +518,10 @@ int* create_children_list(int *n_children)
     }
     return children_list;
 }
+
+/**
+ * Checks if there is any active (non-idle) children.
+ */
 bool has_active_children(int *active_list, int n_children)
 {
     int i;
@@ -436,6 +530,7 @@ bool has_active_children(int *active_list, int n_children)
     }
     return false;
 }
+
 void print_move_list(int *move_list, int n_moves)
 {
     int i;
@@ -446,6 +541,9 @@ void print_move_list(int *move_list, int n_moves)
     DEBUG(("]\n"));
 }
 
+/**
+ * Update a computation unit with the new move.
+ */
 void update_job(Job *job, int move, char player, char *board, int depth, int alpha, int beta)
 {
     job->player = opponent(player);
@@ -456,11 +554,18 @@ void update_job(Job *job, int move, char player, char *board, int depth, int alp
     job->move = move;
 }
 
+/**
+ * Send a job to the recipient.
+ */
 void send_subproblem(Job *job, int to)
 {
     MPI_Send(job, sizeof(Job)+SQUARES, MPI_BYTE, to, SUBPROBLEM_TAG, MPI_COMM_WORLD);
     DEBUG((" --- %s %d: sent subproblem to %d\n", PROC_NAME, myid, to));
 }
+
+/**
+ * Receive result from the sender.
+ */
 void receive_result(Tuple *result, int *from)
 {
     DEBUG((" --- %s %d: waiting for results\n", PROC_NAME, myid));
@@ -468,40 +573,73 @@ void receive_result(Tuple *result, int *from)
     *from = status.MPI_SOURCE;
     DEBUG((" --- %s %d: received result from %d\n", PROC_NAME, myid, *from));
 }
+
+/**
+ * Send termination to the recipient.
+ */
 void send_termination(int to)
 {
     MPI_Send(&myid, 1, MPI_INT, to, TERMINATION_TAG, MPI_COMM_WORLD);
     // DEBUG((" --- MASTER: sent termination to %d\n", to));
 }
+
+/**
+ * Receive termination acknowledgement from the sender.
+ */
 void receive_termination_ack(int from)
 {
     int tmp;
     MPI_Recv(&tmp, 1, MPI_INT, from, TERMINATION_ACK_TAG, MPI_COMM_WORLD, &status);
 }
+
+/**
+ * Probe the MPI buffer for new messages.
+ * This is a blocking operation.
+ */
 void probe(MPI_Status *status)
 {
     MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, status);
 }
+
+/**
+ * Receive a job from the sender.
+ */
 void receive_subproblem(Job *job, int from)
 {
     MPI_Recv(job, sizeof(Job)+SQUARES, MPI_BYTE, from, SUBPROBLEM_TAG, MPI_COMM_WORLD, &status);
     DEBUG((" --- SLAVE %d: received a subproblem from %d\n", myid, from));
 }
+
+/**
+ * Receive termination from the sender.
+ */
 void receive_termination(int *from)
 {
     int tmp;
     MPI_Recv(&tmp, 1, MPI_INT, MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &status);
     *from = status.MPI_SOURCE;
 }
+
+/**
+ * Send termination acknowledgement to the recipient.
+ */
 void send_termination_ack(int to)
 {
     MPI_Send(&myid, 1, MPI_INT, to, TERMINATION_ACK_TAG, MPI_COMM_WORLD);
 }
+
+/**
+ * Print slave statistics - communication time, computation time and number of boards evaluated.
+ */
 void print_slave_stats()
 {
     DEBUG((" --- SLAVE %d: communication_time=%6.2f seconds; computation_time=%6.2f seconds; boards_evaluated:%ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated));
-    printf("%d, %6.4f, %6.4f, %ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated);
+    DEBUG(("%d, %6.4f, %6.4f, %ld\n", myid, comm_time / 1000000000.0, comp_time / 1000000000.0, boards_evaluated));
 }
+
+/**
+ * Receive cutoff from the sender.
+ */
 void receive_cutoff(int *from)
 {
     int tmp;
@@ -509,26 +647,46 @@ void receive_cutoff(int *from)
     *from = status.MPI_SOURCE;
     DEBUG((" --- SLAVE %d: received a cutoff from %d\n", myid, *from));
 }
+
+/**
+ * Send cutoff acknowledgement to the recipient.
+ */
 void send_cutoff_ack(int to)
 {
     MPI_Send(&myid, 1, MPI_INT, to, CUTOFF_ACK_TAG, MPI_COMM_WORLD);
 }
+
+/**
+ * Send result to parent.
+ */
 void send_result_to_parent(int score, int move)
 {
     Tuple result = {.score = score, .move = move};
     MPI_Send(&result, sizeof(Tuple), MPI_BYTE, PARENT_ID, RETURN_TAG, MPI_COMM_WORLD);
 }
+
+/**
+ * Helper function to find the order of the child among its siblings.
+ */
 int child_order(int child)
 {
     if ((myid * MAX_CHILDREN) == 0) return child-1;
     return (child % (myid * MAX_CHILDREN)) - 1;
 }
+
+/**
+ * Keep tracks of which child is active or not.
+ */
 int* create_active_list(int n_children)
 {
     int i, *active_list = malloc(sizeof(int) * n_children);
     for (i=0;i<n_children;i++) active_list[i] = false;
     return active_list;
 }
+
+/**
+ * Function to be executed by the master MPI process (rank = 0).
+ */
 int master(char player, char *board, int depth)
 {
     int n_moves, i, n_children, child;
@@ -590,6 +748,9 @@ int master(char player, char *board, int depth)
     return best_move;
 }
 
+/**
+ * Function to parallelize alphabeta search.
+ */
 void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *active_list)
 {
     char player = job->player;
@@ -690,6 +851,10 @@ void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *ac
     send_result_to_parent(alpha, parent_move);
     comm_time += wall_clock_time() - before;
 }
+
+/**
+ * Function to be executed by the slave MPI processes.
+ */
 void slave() {
     int n_children, from, has_message;
     int *children_list = create_children_list(&n_children);
@@ -725,6 +890,9 @@ void slave() {
     }
 }
 
+/**
+ * Function used by parallel version to start the evaluation.
+ */
 void play(char player, int depth)
 {
     int best_move = -1;
@@ -747,6 +915,9 @@ void play(char player, int depth)
 }
 #endif
 
+/**
+ * Parse "Size:" argument in initialbrd.txt.
+ */
 void parse_size(char *line)
 {
     char *token;
@@ -757,6 +928,10 @@ void parse_size(char *line)
     token = strsep(&line, ",");
     cols = atoi(token);
 }
+
+/**
+ * Parse "White:" argument in initialbrd.txt.
+ */
 void parse_white_positions(char *line)
 {
     char *token, *positions;
@@ -771,6 +946,10 @@ void parse_white_positions(char *line)
     }
     free(positions);
 }
+
+/**
+ * Parse "Black:" argument in initialbrd.txt.
+ */
 void parse_black_positions(char *line)
 {
     char *token, *positions;
@@ -785,6 +964,10 @@ void parse_black_positions(char *line)
     }
     free(positions);
 }
+
+/**
+ * Parse "Color:" argument in initialbrd.txt.
+ */
 void parse_color(char *line)
 {
     char *p = line;
@@ -796,10 +979,18 @@ void parse_color(char *line)
         PLAYER = WHITE;
     }
 }
+
+/**
+ * Parse "Timeout:" argument in initialbrd.txt.
+ */
 void parse_timeout(char *line)
 {
     TIMEOUT = atoi(line);
 }
+
+/**
+ * Parse arguments in initialbrd.txt.
+ */
 void parse_initialbrd(int argc, char* argv[])
 {
     FILE *file;
@@ -826,14 +1017,26 @@ void parse_initialbrd(int argc, char* argv[])
         fclose(file);
     }
 }
+
+/**
+ * Parse "MaxDepth:" argument in evalparams.txt.
+ */
 void parse_max_depth(char *line)
 {
     MAX_DEPTH = atoi(line);
 }
+
+/**
+ * Parse "MaxBoards:" argument in evalparams.txt.
+ */
 void parse_max_boards(char *line)
 {
     MAX_BOARDS = atoi(line);
 }
+
+/**
+ * Parse arguments in evalparams.txt.
+ */
 void parse_evalparams(int argc, char* argv[])
 {
     FILE *file;
@@ -855,6 +1058,9 @@ void parse_evalparams(int argc, char* argv[])
     }
 }
 
+/**
+ * Initialize DIRECTIONS array.
+ */
 void initialize_directions()
 {
     DIRECTIONS = malloc(sizeof(int)*9);
@@ -868,6 +1074,7 @@ void initialize_directions()
     DIRECTIONS[i++] = DOWN_LEFT;
     DIRECTIONS[i++] = UP_LEFT;
 }
+
 int main(int argc, char *argv[])
 {
     long long before, after;
@@ -888,7 +1095,7 @@ int main(int argc, char *argv[])
 
     if (myid == MASTER_ID) {
         DEBUG((" --- PARALLEL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
-        printf("Time: %6.4f\n", (after - before) / 1000000000.0);
+        DEBUG(("Time: %6.4f\n", (after - before) / 1000000000.0));
     }
     MPI_Finalize();
 
@@ -899,8 +1106,8 @@ int main(int argc, char *argv[])
 
     after = wall_clock_time();
     DEBUG((" --- SERIAL: total_elapsed_time=%6.2f seconds\n", (after - before) / 1000000000.0));
-    printf("Boards evaluated: %ld\n", boards_evaluated);
-    printf("Time: %6.4f\n", (after - before) / 1000000000.0);
+    DEBUG(("Boards evaluated: %ld\n", boards_evaluated));
+    DEBUG(("Time: %6.4f\n", (after - before) / 1000000000.0));
 #endif
     return 0;
 }
