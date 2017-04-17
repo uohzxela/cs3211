@@ -140,6 +140,7 @@ long long wall_clock_time()
 
 /**
  * Converts the square index to a readable label string.
+ * "na" is returned if the index is invalid.
  */
 char* index2label(int index)
 {
@@ -161,6 +162,9 @@ int label2index(const char *label)
     return row*WIDTH+col;
 }
 
+/**
+ * Allocates memory for a board and initializes it with the initial white and black pieces.
+ */
 char* create_board()
 {
     char *board = malloc(sizeof(char)*(SQUARES));
@@ -185,6 +189,9 @@ char* create_board()
     return board;
 }
 
+/**
+ * Print the given board.
+ */
 void print_board(char *board)
 {
     int i;
@@ -209,6 +216,9 @@ void print_board(char *board)
     DEBUG(("\n"));
 }
 
+/**
+ * Returns a clone of the board.
+ */
 char* copy_board(char *src)
 {
     char *copy = malloc(sizeof(char)*SQUARES);
@@ -442,6 +452,9 @@ Tuple* alphabeta(char player, char *board, int depth, int alpha, int beta)
     return tuple(alpha, best_move);
 }
 
+/**
+ * Print the best move.
+ */
 void print_best_move(int best_move)
 {
     printf("Best moves: { %s }\n", index2label(best_move));
@@ -724,6 +737,8 @@ int master(char player, char *board, int depth)
         send_subproblem(job, child);
 
     }
+
+    // result aggregation
     time_t start = time(NULL), end;
     while (has_active_children(active_list, n_children) && difftime(end, start) < AGGREGATION_TIMEOUT) {
         MPI_Iprobe(MPI_ANY_SOURCE, RETURN_TAG, MPI_COMM_WORLD, &has_message, &status);
@@ -810,12 +825,13 @@ void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *ac
             if (-(result.score) > alpha) {
                 alpha = -(result.score);
             }
+           	// send a new job immediately after receiving result
             update_job(job, move_list[i], player, board, depth, alpha, beta);
             send_subproblem(job, child);
             continue;
         }
 
-
+        // execute alphabeta sequentially if there is no result in the current iteration
         comm_time += wall_clock_time() - before;
         DEBUG((" --- SLAVE %d: one iteration of alphabeta\n", myid));
         before = wall_clock_time();
@@ -827,6 +843,7 @@ void parallelize_alphabeta(Job *job, int *children_list, int n_children, int *ac
         comp_time += wall_clock_time() - before;
     }
 
+    // result aggregation
     before = wall_clock_time();
     time_t start = time(NULL), end;
     while (has_active_children(active_list, n_children) && difftime(end, start) < AGGREGATION_TIMEOUT) {
@@ -864,6 +881,7 @@ void slave() {
 
     while (true) {
         before = wall_clock_time();
+        // idling time
         while (true) {
             MPI_Iprobe(MPI_ANY_SOURCE, TERMINATION_TAG, MPI_COMM_WORLD, &has_message, &status);
             if (has_message) {
